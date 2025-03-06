@@ -1,0 +1,24 @@
+{
+  "startTime": 0,
+  "endTime": 2400,
+  "reportProgress": true,
+  "liveLogInterval": 0,
+  "logVariables": {
+    "{Controller}.ControllerInstance": [
+        "heater_on_out"
+    ],
+    "{Plant}.PlantInstance": [
+        "T_bair_out",
+        "T_heater_out"
+    ],
+    "{Room}.RoomInstance": [
+        "T_room_out"
+    ],
+    "{Supervisor}.SupervisorInstance": [
+        "C_out",
+        "H_out",
+        "LL_out",
+        "UL_out"
+    ]
+  }
+}

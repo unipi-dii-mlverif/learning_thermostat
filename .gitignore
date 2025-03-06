@@ -1,0 +1,4 @@
+*.fmu
+*.csv
+result.*
+fmuCheck.linux64

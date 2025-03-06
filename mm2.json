@@ -1,0 +1,52 @@
+{
+  "fmus": {
+    "{Plant}": "Plant.fmu",
+    "{Controller}": "Controller.fmu",
+    "{Room}": "Room.fmu",
+    "{Supervisor}": "Supervisor.fmu",
+    "{KalmanFilter}": "KalmanFilter.fmu"
+  },
+  "connections": {
+    "{Plant}.PlantInstance.T_bair_out": [
+      "{Controller}.ControllerInstance.T_bair_in",
+      "{Supervisor}.SupervisorInstance.T_bair_plant_in",
+      "{KalmanFilter}.KalmanFilterInstance.T_bair_in"
+    ],
+    "{Controller}.ControllerInstance.heater_on_out": [
+      "{Plant}.PlantInstance.heater_on_in",
+      "{Supervisor}.SupervisorInstance.heater_on_in",
+      "{KalmanFilter}.KalmanFilterInstance.heater_on_in"
+    ],
+    "{Supervisor}.SupervisorInstance.C_out": [
+      "{Controller}.ControllerInstance.C_in"
+    ],
+    "{Supervisor}.SupervisorInstance.H_out": [
+      "{Controller}.ControllerInstance.H_in"
+    ],
+    "{Supervisor}.SupervisorInstance.LL_out": [
+      "{Controller}.ControllerInstance.LL_in"
+    ],
+    "{Supervisor}.SupervisorInstance.UL_out": [
+      "{Controller}.ControllerInstance.UL_in"
+    ],
+    "{KalmanFilter}.KalmanFilterInstance.T_bair_out": [
+      "{Supervisor}.SupervisorInstance.T_bair_in"
+    ],
+    "{KalmanFilter}.KalmanFilterInstance.T_heater_out": [
+      "{Supervisor}.SupervisorInstance.T_heater_in"
+    ],
+    "{Room}.RoomInstance.T_room_out": [
+      "{Plant}.PlantInstance.T_room_in",
+      "{Supervisor}.SupervisorInstance.T_room_in",
+      "{KalmanFilter}.KalmanFilterInstance.T_room_in"
+    ]
+  },
+  "parameters": {
+    "{Plant}.PlantInstance.delay": -1
+  },
+
+  "algorithm": {
+    "type": "fixed-step",
+    "size": 3
+  }
+}
