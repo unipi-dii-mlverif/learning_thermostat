@@ -1,4 +1,7 @@
 *.fmu
 *.csv
-result.*
+result*.*
 fmuCheck.linux64
+build/*
+coe.log
+__pycache__

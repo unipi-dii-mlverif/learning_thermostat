@@ -34,6 +34,22 @@
     <ScalarVariable name="heater_on_out" valueReference="5" variability="discrete" causality="output" initial="exact">
       <Boolean start="false"/>
     </ScalarVariable>
+    <!--Index of variable = "7"-->
+    <ScalarVariable name="failure_start_time" valueReference="6" causality="parameter" variability="fixed"  initial="exact" >
+    	<Real start="150" />
+    </ScalarVariable>
+    <!--Index of variable = "8"-->
+    <ScalarVariable name="failure" valueReference="7" causality="parameter" variability="fixed"  initial="exact" >
+    	<Real start="1" />
+    </ScalarVariable>
+    <!--Index of variable = "9"-->
+    <ScalarVariable name="failure_value" valueReference="8" causality="parameter" variability="fixed"  initial="exact" >
+    	<Real start="5" />
+    </ScalarVariable>
+    <!--Index of variable = "10"-->
+    <ScalarVariable name="T_desired" valueReference="9" causality="parameter" variability="fixed"  initial="exact" >
+    	<Real start="35" />
+    </ScalarVariable>
   </ModelVariables>
   <ModelStructure>
     <Outputs>

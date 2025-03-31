@@ -4,7 +4,8 @@
     "{Controller}": "Controller.fmu",
     "{Room}": "Room.fmu",
     "{Supervisor}": "Supervisor.fmu",
-    "{KalmanFilter}": "KalmanFilter.fmu"
+    "{KalmanFilter}": "KalmanFilter.fmu",
+    "{ThermostatML}": "ThermostatML.fmu"
   },
   "connections": {
     "{Plant}.PlantInstance.T_bair_out": [
@@ -44,9 +45,46 @@
   "parameters": {
     "{Plant}.PlantInstance.delay": -1
   },
-
   "algorithm": {
     "type": "fixed-step",
-    "size": 3
+    "size": 5
+  },
+  "modelSwaps": {
+    "ControllerInstance": {
+      "swapInstance": "ThermostatMLInstance",
+      "stepCondition": "(true)",
+      "swapCondition": "(ThermostatMLInstance.has_learnt)",
+      "swapConnections": {
+        "{Plant}.PlantInstance.T_bair_out": [
+          "{ThermostatML}.ThermostatMLInstance.T_bair_in"
+        ],
+        "{ThermostatML}.ThermostatMLInstance.heater_on_out": [
+          "{Plant}.PlantInstance.heater_on_in",
+          "{Supervisor}.SupervisorInstance.heater_on_in",
+          "{KalmanFilter}.KalmanFilterInstance.heater_on_in"
+        ],
+        "{Supervisor}.SupervisorInstance.C_out": [
+          "{ThermostatML}.ThermostatMLInstance.C_in"
+        ],
+        "{Supervisor}.SupervisorInstance.H_out": [
+          "{ThermostatML}.ThermostatMLInstance.H_in"
+        ],
+        "{Supervisor}.SupervisorInstance.LL_out": [
+          "{ThermostatML}.ThermostatMLInstance.LL_in"
+        ],
+        "{Supervisor}.SupervisorInstance.UL_out": [
+          "{ThermostatML}.ThermostatMLInstance.UL_in"
+        ],
+        "{Controller}.ControllerInstance.heater_on_out": [
+          "{ThermostatML}.ThermostatMLInstance.heater_on_in"
+        ]
+      }
+    }
+  },
+  "modelTransfers": {
+    "PlantInstance": "PlantInstance",
+    "RoomInstance": "RoomInstance",
+    "SupervisorInstance": "SupervisorInstance",
+    "KalmanFilterInstance": "KalmanFilterInstance"
   }
 }

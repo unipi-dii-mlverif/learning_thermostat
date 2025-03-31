@@ -1,6 +1,6 @@
 import pickle
 from fmi2 import Fmi2FMU, Fmi2Status
-import torch
+import numpy as np
 
 class Model(Fmi2FMU):
     def __init__(self, reference_to_attr=None) -> None:
@@ -14,26 +14,33 @@ class Model(Fmi2FMU):
         self.T_desired = 35.0
         self.next_time = 0.0
         self.current_state = "CoolingDown"
-        self.nn = torch.load("./incubator.pth", map_location="cpu")
+        self.failure_start_time = 150
+        self.failure_value = -100
+        self.failure = 1 #if 0 no failure
     
     def exit_initialization_mode(self):
         
         # Ensure correct initialization
-        assert self.LL_in >= 0.0
-        assert self.UL_in >= 0.0
-        assert self.H_in >= 0.0
-        assert self.C_in >= 0.0
+        #assert self.LL_in >= 0.0
+        #assert self.UL_in >= 0.0
+        #assert self.H_in >= 0.0
+        #assert self.C_in >= 0.0
         #assert self.T_bair_in >= 0.0
 
         return Fmi2Status.ok
 
     def ctrl_step(self, time):
-        predicted = self.nn(torch.Tensor([self.T_bair_in, self.T_desired, self.T_desired-self.LL_in]))
-        #print("ciao")
-        heat_on = predicted[0].item() > 0.5
+        self.failure = int(self.failure)
+        if self.failure_start_time <= time:
+            if self.failure == 1:
+                self.T_bair_in = self.T_bair_in - self.failure_value
+            if self.failure == 2:
+                self.T_bair_in = self.T_bair_in - float(np.random.normal(0,self.failure_value,1))
+            if self.failure == 3:
+                self.T_bair_in = self.T_bair_in - (time - self.failure_start_time) * self.failure_value / 2500
         if self.current_state == "CoolingDown":
             self.heater_on_out = False
-            if heat_on:
+            if self.H_in > 0.0 and self.T_bair_in <= self.T_desired - self.LL_in:
                 self.current_state = "Heating"
                 self.next_time = time + self.H_in
             return
@@ -46,7 +53,7 @@ class Model(Fmi2FMU):
         if self.current_state == "Waiting":
             self.heater_on_out = False
             if 0 < self.next_time <= time:
-                if heat_on:
+                if self.H_in > 0.0 and self.T_bair_in <= self.T_desired:
                     self.current_state = "Heating"
                     self.next_time = time + self.H_in
                 else:

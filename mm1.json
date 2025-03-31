@@ -44,9 +44,8 @@
   "parameters": {
     "{Plant}.PlantInstance.delay": -1
   },
-
   "algorithm": {
     "type": "fixed-step",
-    "size": 3
+    "size": 5
   }
 }

@@ -8,7 +8,7 @@ import numpy as np
 
 HEATER_VOLTAGE = 12.0
 HEATER_CURRENT = 10.45
-STEP_SIZE = 3.0
+STEP_SIZE = 5.0
 
 class Model(Fmi2FMU):
     def __init__(self, reference_to_attr=None) -> None:
