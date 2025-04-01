@@ -37,7 +37,7 @@ class Model(Fmi2FMU):
             nn.Linear(64, 128),
             nn.ReLU(),
             nn.Linear(128, 64),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Linear(64, 1),
             #nn.Softmax(dim=-1)
             nn.Sigmoid(),
@@ -45,7 +45,7 @@ class Model(Fmi2FMU):
         self.n_true = 0
         self.n_false = 0
 
-        self.swsm = SWSM(self.model, 40)
+        self.swsm = SWSM(self.model, 25)
 
     def exit_initialization_mode(self):
         return Fmi2Status.ok
@@ -56,8 +56,8 @@ class Model(Fmi2FMU):
         
         self.last_time = time
 
-        if not self.has_learnt:
-            print(self.loss)
+        #if not self.has_learnt:
+        #    print(self.loss)
 
         # Poor men's balancing
         if not self.has_learnt and self.n_false != 0 and not self.heater_on_in and ((self.n_false / (self.n_true + self.n_false) > .4) or (random.random() <= 0.2)):

@@ -4,7 +4,7 @@ from scipy.integrate import solve_ivp, RK45
 import time
 
 HEATER_VOLTAGE = 12.0
-HEATER_CURRENT = 3#10.45
+HEATER_CURRENT = 6#10.45
 
 class Model(Fmi2FMU):
     def __init__(self, reference_to_attr=None) -> None:
