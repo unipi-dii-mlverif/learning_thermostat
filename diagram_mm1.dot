@@ -1,0 +1,28 @@
+digraph FMUNetwork {
+  rankdir=LR;
+  node [shape=box, style=filled, fillcolor=lightblue];
+
+  // FMUs
+  Plant [label="Plant\nOutputs: T_bair_out\nInputs: heater_on_in, T_room_in"];
+  Controller [label="Controller\nOutputs: heater_on_out\nInputs: T_bair_in, C_in, H_in, LL_in, UL_in"];
+  Supervisor [label="Supervisor\nOutputs: C_out, H_out, LL_out, UL_out\nInputs: T_bair_plant_in, heater_on_in, T_room_in, T_bair_in, T_heater_in"];
+  KalmanFilter [label="KalmanFilter\nOutputs: T_bair_out, T_heater_out\nInputs: T_bair_in, heater_on_in, T_room_in"];
+  Room [label="Room\nOutputs: T_room_out"];
+
+  // Connections
+  Plant -> Controller [label="T_bair"];
+  Plant -> Supervisor [label="T_bair"];
+  Plant -> KalmanFilter [label="T_bair"];
+
+  Controller -> Plant [label="heater_on"];
+  Controller -> Supervisor [label="heater_on"];
+  Controller -> KalmanFilter [label="heater_on"];
+
+  Supervisor -> Controller [label="C\nH\nLL\nUL"];
+
+  KalmanFilter -> Supervisor [label="T_bair\nT_heater"];
+
+  Room -> Plant [label="T_room"];
+  Room -> Supervisor [label="T_room"];
+  Room -> KalmanFilter [label="T_room"];
+}

@@ -11,7 +11,8 @@
     "{Plant}.PlantInstance.T_bair_out": [
       "{Controller}.ControllerInstance.T_bair_in",
       "{Supervisor}.SupervisorInstance.T_bair_plant_in",
-      "{KalmanFilter}.KalmanFilterInstance.T_bair_in"
+      "{KalmanFilter}.KalmanFilterInstance.T_bair_in",
+      "{ThermostatML}.ThermostatMLInstance.T_bair_in"
     ],
     "{Controller}.ControllerInstance.heater_on_out": [
       "{Plant}.PlantInstance.heater_on_in",

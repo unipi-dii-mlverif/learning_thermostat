@@ -12,11 +12,11 @@
   <ModelVariables>
     <!--Index of variable = "1"-->
     <ScalarVariable name="LL_out" valueReference="0" variability="discrete" causality="output" initial="exact">
-      <Real start="15.0"/>
+      <Real start="2.0"/>
     </ScalarVariable>
     <!--Index of variable = "2"-->
     <ScalarVariable name="UL_out" valueReference="1" variability="discrete" causality="output" initial="exact">
-      <Real start="30.0"/>
+      <Real start="2.0"/>
     </ScalarVariable>
     <!--Index of variable = "3"-->
     <ScalarVariable name="H_out" valueReference="2" variability="discrete" causality="output" initial="calculated">

@@ -1,0 +1,13 @@
+digraph finite_state_machine {
+    rankdir=LR;
+    node [shape=rectangle];
+    
+    "CoolingDown" [label="CoolingDown\nheater_on_out = False"];
+    "Heating" [label="Heating\nheater_on_out = True"];
+    "Waiting" [label="Waiting\nheater_on_out = False"];
+    
+    "CoolingDown" -> "Heating" [label="H_in > 0.0\nand T_bair_in <= T_desired - LL_in"];
+    "Heating" -> "Waiting" [label="C_in > 0.0\nand next_time <= time"];
+    "Waiting" -> "Heating" [label="next_time <= time\nand H_in > 0.0\nand T_bair_in <= T_desired"];
+    "Waiting" -> "CoolingDown" [label="next_time <= time\nand (H_in <= 0.0\nor T_bair_in > T_desired)"];
+}

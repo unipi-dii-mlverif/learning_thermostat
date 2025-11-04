@@ -5,3 +5,5 @@ fmuCheck.linux64
 build/*
 coe.log
 __pycache__
+grafo.pdf
+.vscode/settings.json

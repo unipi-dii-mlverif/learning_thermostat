@@ -1,10 +1,11 @@
 {
   "startTime": 0,
-  "endTime": 10000,
+  "endTime": 15000,
   "liveLogInterval": 0,
   "logVariables": {
     "{Controller}.ControllerInstance": [
-      "heater_on_out"
+      "heater_on_out",
+      "T_bair_in"
     ],
     "{Plant}.PlantInstance": [
       "T_bair_out",
@@ -23,7 +24,8 @@
       "heater_on_in",
       "heater_on_out",
       "loss",
-      "has_learnt"
+      "has_learnt",
+      "T_bair_in"
     ]
   }
 }

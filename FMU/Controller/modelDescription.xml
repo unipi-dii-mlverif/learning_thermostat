@@ -48,7 +48,7 @@
     </ScalarVariable>
     <!--Index of variable = "10"-->
     <ScalarVariable name="T_desired" valueReference="9" causality="parameter" variability="fixed"  initial="exact" >
-    	<Real start="35" />
+    	<Real start="25.5" />
     </ScalarVariable>
   </ModelVariables>
   <ModelStructure>

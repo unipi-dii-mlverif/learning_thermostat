@@ -4,7 +4,7 @@ from scipy.integrate import solve_ivp, RK45
 import time
 
 HEATER_VOLTAGE = 12.0
-HEATER_CURRENT = 6#10.45
+HEATER_CURRENT = 10.45
 
 class Model(Fmi2FMU):
     def __init__(self, reference_to_attr=None) -> None:
@@ -58,7 +58,9 @@ class Model(Fmi2FMU):
         assert sol.success
 
         self.logger.debug(f"Getting outputs from internal model: {sol.y}")
-        (self.T_bair_out, self.T_heater_out) = sol.y[:,-1]
+        (T_air, T_heater) = sol.y[:,-1]
+        self.T_bair_out = T_air
+        self.T_heater_out = T_heater
         self.logger.debug(f"New state: T_bair_out={self.T_bair_out}, T_heater_out={self.T_heater_out}")
 
         if self.delay > 0.0:

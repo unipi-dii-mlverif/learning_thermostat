@@ -1,5 +1,3 @@
-# ToDo define wrapper model for the FMI interface
-# Xdata = data[["{Ego}.EgoInstance.ego_velocity","{Ego}.EgoInstance.rel_position","{Ego}.EgoInstance.rel_velocity"]].values
 import pickle
 import SlidingWindowStepModel
 from fmi2 import Fmi2FMU, Fmi2Status
@@ -8,6 +6,10 @@ from torch import nn
 import statistics
 from SlidingWindowStepModel import *
 import random
+import os
+
+SAVE_TO_DISK = True
+SAVE_DIR = "/var/tmp/learning_thermostat"
 
 class Model(Fmi2FMU):
     def __init__(self, reference_to_attr=None) -> None:
@@ -24,17 +26,19 @@ class Model(Fmi2FMU):
         self.has_learnt = False
         self.loss = 201.0
         
-        self.T_desired = 35.0
+        self.last_heater_status = False
+        self.T_desired = 25.5 #@TODO add to parameters
+        self.commutation_time = 0
         self.last_time = float("-inf")
-        self.threshold = 0.005 #0.001 
+        self.threshold = 0.002 #0.001 
         self.model_training = True
         self.model = nn.Sequential(
-            nn.Linear(3, 32),
+            nn.Linear(5, 64),
             nn.LeakyReLU(),
-            nn.Linear(32, 64),
-            nn.Dropout(0.2),
-            nn.ReLU(),
             nn.Linear(64, 128),
+            nn.ReLU(),
+            nn.Linear(128, 128),
+            nn.Dropout(0.1),
             nn.ReLU(),
             nn.Linear(128, 64),
             nn.LeakyReLU(),
@@ -45,13 +49,13 @@ class Model(Fmi2FMU):
         self.n_true = 0
         self.n_false = 0
 
-        self.swsm = SWSM(self.model, 25)
+        self.swsm = SWSM(self.model, 33)
 
     def exit_initialization_mode(self):
         return Fmi2Status.ok
 
     def ctrl_step(self, time):
-        if time < self.last_time + 1:
+        if time < self.last_time + 1: #or True:
             return
         
         self.last_time = time
@@ -59,9 +63,14 @@ class Model(Fmi2FMU):
         #if not self.has_learnt:
         #    print(self.loss)
 
+        heater_status = self.heater_on_in if not self.has_learnt else self.heater_on_out
+        if self.last_heater_status != heater_status:
+            print("commuto @ ", time)
+            self.commutation_time = time
+
         # Poor men's balancing
-        if not self.has_learnt and self.n_false != 0 and not self.heater_on_in and ((self.n_false / (self.n_true + self.n_false) > .4) or (random.random() <= 0.2)):
-            print("skipping", self.n_false, self.n_true)
+        if not self.has_learnt and self.n_false != 0 and not self.heater_on_in and ((self.n_false / (self.n_true + self.n_false) > .5) or (random.random() <= 0.1)):
+            #print("skipping", self.n_false, self.n_true)
             return
         
         if self.heater_on_in:
@@ -69,15 +78,30 @@ class Model(Fmi2FMU):
         else:
             self.n_false += 1
         
-        input = torch.Tensor([self.T_bair_in, self.H_in, self.T_desired-self.LL_in])
+        input = torch.Tensor([
+            self.T_bair_in,
+            self.T_desired-self.LL_in,
+            self.T_desired+self.UL_in,
+            #1 if self.H_in > 0 else -1,
+            1 if time - self.commutation_time > self.C_in else -1,
+            1 if time - self.commutation_time > self.H_in else -1
+            #self.T_bair_in,
+            #self.T_desired - self.LL_in,
+            #time - self.commutation_time - self.C_in,
+            #time - self.commutation_time - (self.C_in if heater_status else self.H_in) if heater_status and self.H_in > 0 else 0
+            #self.T_bair_in - (self.T_desired - self.LL_in),
+            #self.T_bair_in - (self.T_desired + self.UL_in)
+        ])
         target = torch.Tensor([1.0 if self.heater_on_in else 0.0]) #, 1.0 if not self.heater_on_in else 0.0])
         #if self.heater_on_in:
         #    print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", input, target)
         out, loss2 = self.swsm.accumulate_and_step(input, self.model_training, target)
         if loss2 is not None:
-            self.n_false = 0
-            self.n_true = 0
             self.loss = loss2
+        
+        #if loss2 is not None and abs(loss2 - self.loss) < 0.1:
+        #    self.n_false = 0
+        #    self.n_true = 0
         
         # Start outputing heating command when the model is trained and swapped
         if out is None:
@@ -94,7 +118,8 @@ class Model(Fmi2FMU):
         if self.loss is not None and not isinstance(self.loss, float):
             self.loss = self.loss.item()
 
-        if time >= 2000 and self.loss <= self.threshold and not self.has_learnt:
+        # TODO do something better
+        if ((time >= 3000 and self.loss <= self.threshold) or time >= 9000) and not self.has_learnt:
             print("=========================> DONE @ ", time)
             self.has_learnt = True
             self.model_training = False
@@ -102,4 +127,22 @@ class Model(Fmi2FMU):
     def do_step(self, current_time, step_size, no_step_prior):
         self.ctrl_step(current_time)
 
+        return Fmi2Status.ok
+    
+    def terminate(self) -> int:
+        # Save to disk
+        if SAVE_TO_DISK:        
+            os.makedirs(SAVE_DIR, exist_ok=True)
+            
+            # Save the model state dict
+            model_path = os.path.join(SAVE_DIR, "thermostat_nn_model.pt")
+            print(f"Saving to {model_path}...")
+            torch.save(self.model.state_dict(), model_path)
+            print(f"Model saved to {model_path}")
+            
+            # Also save the entire model
+            full_model_path = os.path.join(SAVE_DIR, "thermostat_nn_full_model.pt")
+            torch.save(self.model, full_model_path)
+            print(f"Full model saved to {full_model_path}")
+            
         return Fmi2Status.ok
