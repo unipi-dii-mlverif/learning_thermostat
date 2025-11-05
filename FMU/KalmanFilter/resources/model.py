@@ -8,7 +8,6 @@ import numpy as np
 
 HEATER_VOLTAGE = 12.0
 HEATER_CURRENT = 10.45
-STEP_SIZE = 5.0
 
 class Model(Fmi2FMU):
     def __init__(self, reference_to_attr=None) -> None:
@@ -20,6 +19,7 @@ class Model(Fmi2FMU):
         self.T_bair_out = -1.0
         self.G_heater = 30.0
         self.C_heater = 30.0
+        self.STEP_SIZE = 5.0
         self.filter = None
         self.state = "Instantiated"
 
@@ -29,7 +29,7 @@ class Model(Fmi2FMU):
 
     def exit_initialization_mode(self):
         """Informs the fmu to exit initialization mode."""
-        self.filter = self.construct_filter(step_size = STEP_SIZE, 
+        self.filter = self.construct_filter(step_size = self.STEP_SIZE, 
                                             std_dev = 0.00001, 
                                             C_air_num = 68.20829072, 
                                             G_box_num = 0.73572788, 
@@ -49,8 +49,8 @@ class Model(Fmi2FMU):
         return super().get_xxx(references)
 
     def do_step(self, current_time, step_size, no_step_prior):
-        assert np.isclose(step_size, STEP_SIZE)
-        #print(step_size, STEP_SIZE)
+        assert np.isclose(step_size, self.STEP_SIZE)
+        #print(step_size, self.STEP_SIZE)
 
         assert self.filter is not None
         

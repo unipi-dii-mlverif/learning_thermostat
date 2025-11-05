@@ -38,6 +38,10 @@
     <ScalarVariable name="C_heater" valueReference="6" variability="fixed" causality="parameter">
       <Real start="30.0"/>
     </ScalarVariable>
+    <!--Index of variable = "8"-->
+    <ScalarVariable name="STEP_SIZE" valueReference="7" variability="fixed" causality="parameter">
+      <Real start="5.0"/>
+    </ScalarVariable>
   </ModelVariables>
   <ModelStructure>
     <Outputs>
