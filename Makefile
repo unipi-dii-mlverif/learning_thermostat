@@ -9,7 +9,7 @@ LIVE_LOSS ?= y # Requires Gnuplot
 ALL_STOCK_FMU = FMU/Controller.fmu FMU/KalmanFilter.fmu FMU/Plant.fmu FMU/Room.fmu FMU/Supervisor.fmu
 GRAPHS = build/g_env.pdf build/g_loss.pdf build/g_act.pdf
 
-all: build/report.csv $(GRAPHS)
+all: build/report.csv $(GRAPHS) build/cmp/result.csv
 
 .SUFFIXES:
 .PHONY: all clean
