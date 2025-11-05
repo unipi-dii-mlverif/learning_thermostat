@@ -1,4 +1,4 @@
-_dummy := $(shell mkdir -p build)
+_dummy := $(shell mkdir -p build/cmp)
 
 #ZIP_UTIL=zip -r
 ZIP_UTIL=7z a -tzip -mx=1
@@ -49,7 +49,8 @@ build/report.csv: build/stage2/outputs.csv build/outputs.csv
 # TODO merge csv?
 	touch build/report.csv
 
-build/outputs.csv build/stage2/outputs.csv: build/spec.mabl build/stage2/spec.mabl
+# @TODO create a json in build, save the weights in build and then tell the CMP target to load the weights from this folder...
+build/outputs.csv build/stage2/outputs.csv /var/tmp/learning_thermostat/thermostat_nn_model.pt: build/spec.mabl build/stage2/spec.mabl
 	@[ "y" = $(LIVE_LOSS) ] && echo "======= LIVE PLOTTING _NOT_ IMPLEMENTED! =========" 
 	$(MAESTRO) interpret build/spec.mabl -tms 10 -thz 1 -transition build/stage2 -output build 2>&1 | tee build/out.txt
 
@@ -58,6 +59,27 @@ build/stage2/spec.mabl: $(ALL_STOCK_FMU) FMU/ThermostatML.fmu mm2.json simulatio
 
 build/spec.mabl: $(ALL_STOCK_FMU) mm1.json simulation-config.json
 	$(MAESTRO) import sg1 simulation-config.json mm1.json -fsp FMU -output build
+
+# targets for comparison
+build/cmp/baseline/spec.mabl: mm_cmp_baseline.json simulation-config-cmp.json $(ALL_STOCK_FMU)
+	mkdir -p build/cmp/baseline
+	$(MAESTRO) import sg1 simulation-config-cmp.json $< -fsp FMU -output build/cmp/baseline
+
+build/cmp/baseline/outputs.csv: build/cmp/baseline/spec.mabl
+	@[ "y" = $(LIVE_LOSS) ] && echo "======= LIVE PLOTTING _NOT_ IMPLEMENTED! =========" 
+	$(MAESTRO) interpret $< -tms 10 -output build/cmp/baseline 2>&1 | tee build/cmp/baseline/out.txt
+
+# targets for comparison
+build/cmp/ml/spec.mabl: mm_cmp_ml.json simulation-config-cmp.json $(ALL_STOCK_FMU)
+	mkdir -p build/cmp/ml
+	$(MAESTRO) import sg1 simulation-config-cmp.json $< -fsp FMU -output build/cmp/ml
+
+build/cmp/ml/outputs.csv: build/cmp/ml/spec.mabl /var/tmp/learning_thermostat/thermostat_nn_model.pt
+	@[ "y" = $(LIVE_LOSS) ] && echo "======= LIVE PLOTTING _NOT_ IMPLEMENTED! =========" 
+	$(MAESTRO) interpret $< -tms 10 -output build/cmp/ml 2>&1 | tee build/cmp/ml/out.txt
+
+build/cmp/result.csv: build/cmp/ml/outputs.csv build/cmp/baseline/outputs.csv merge_cmp.py
+	python3 merge_cmp.py build/cmp/baseline/outputs.csv build/cmp/ml/outputs.csv $@
 
 clean:
 	rm -rf build

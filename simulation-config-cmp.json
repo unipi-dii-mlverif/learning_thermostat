@@ -1,0 +1,31 @@
+{
+  "startTime": 0,
+  "endTime": 2000,
+  "liveLogInterval": 0,
+  "logVariables": {
+    "{Controller}.ControllerInstance": [
+      "heater_on_out",
+      "T_bair_in"
+    ],
+    "{Plant}.PlantInstance": [
+      "T_bair_out",
+      "T_heater_out"
+    ],
+    "{Room}.RoomInstance": [
+      "T_room_out"
+    ],
+    "{Supervisor}.SupervisorInstance": [
+      "C_out",
+      "H_out",
+      "LL_out",
+      "UL_out"
+    ],
+    "{ThermostatML}.ThermostatMLInstance": [
+      "heater_on_in",
+      "heater_on_out",
+      "loss",
+      "has_learnt",
+      "T_bair_in"
+    ]
+  }
+}
