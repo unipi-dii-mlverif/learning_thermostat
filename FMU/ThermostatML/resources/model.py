@@ -25,6 +25,7 @@ class Model(Fmi2FMU):
         self.heater_on_out = False # output
         self.has_learnt = False
         self.loss = 201.0
+        self.model_load_path = ""
         
         self.last_heater_status = False
         self.T_desired = 25.5 #@TODO add to parameters
@@ -52,6 +53,20 @@ class Model(Fmi2FMU):
         self.swsm = SWSM(self.model, 33)
 
     def exit_initialization_mode(self):
+        # Check if we should load a pre-trained model
+        if self.model_load_path and self.model_load_path.strip():
+            try:
+                print(f"Loading model from {self.model_load_path}...")
+                self.model.load_state_dict(torch.load(self.model_load_path))
+                self.model.eval()  # Set to evaluation mode
+                self.has_learnt = True
+                self.model_training = False
+                self.loss = 0.0
+                print(f"Model loaded successfully from {self.model_load_path}")
+            except Exception as e:
+                print(f"Error loading model from {self.model_load_path}: {e}")
+                # Continue with training mode if loading fails
+        
         return Fmi2Status.ok
 
     def ctrl_step(self, time):
@@ -130,8 +145,8 @@ class Model(Fmi2FMU):
         return Fmi2Status.ok
     
     def terminate(self) -> int:
-        # Save to disk
-        if SAVE_TO_DISK:        
+        # Save to disk only if we didn't load from disk
+        if SAVE_TO_DISK and not (self.model_load_path and self.model_load_path.strip()):        
             os.makedirs(SAVE_DIR, exist_ok=True)
             
             # Save the model state dict

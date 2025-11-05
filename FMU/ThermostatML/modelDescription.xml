@@ -46,6 +46,10 @@
     <ScalarVariable name="has_learnt" valueReference="8" variability="discrete" causality="output" initial="exact">
       <Boolean start="false"/>
     </ScalarVariable>
+    <!--Index of variable = "10"-->
+    <ScalarVariable name="model_load_path" valueReference="9" variability="fixed" causality="parameter">
+      <String start=""/>
+    </ScalarVariable>
   </ModelVariables>
   <ModelStructure>
     <Outputs>
