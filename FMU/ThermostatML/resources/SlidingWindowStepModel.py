@@ -11,6 +11,9 @@ class SWSM:
         self.optimizer = optim.Adam(model.parameters(), lr=0.001)  # Replace with chosen optimizer
 
     def accumulate_and_step(self, input_tensor: torch.Tensor, training: bool, target_tensor: torch.Tensor = None) -> torch.Tensor:
+        if not training:
+            return self.infer_step(input_tensor), None
+
         # Add the current sample to the buffer
         self.buffer.append((input_tensor, target_tensor))
 
@@ -24,10 +27,8 @@ class SWSM:
 
         # Process the batch depending on training mode
         batch_inputs, batch_targets = self.prepare_batch(training)
-        if training:
-            return None, self.train_step(batch_inputs, batch_targets)
-        else:
-            return self.infer_step(input_tensor), None
+        return None, self.train_step(batch_inputs, batch_targets)
+
 
     def prepare_batch(self, training: bool):
         """Prepare batch inputs and targets from the buffer."""
