@@ -4,7 +4,7 @@ from scipy.integrate import solve_ivp, RK45
 import time
 
 HEATER_VOLTAGE = 12.0
-HEATER_CURRENT = 10.45
+HEATER_CURRENT = 10
 
 class Model(Fmi2FMU):
     def __init__(self, reference_to_attr=None) -> None:
@@ -22,8 +22,8 @@ class Model(Fmi2FMU):
     def state_der(self, t, state):
 
         # Comment out to remove dummy fault injection that simulates lid opening.
-        #G_box = self.G_box if t < 800 else (5*self.G_box if t < 1500 else self.G_box)
-        G_box = self.G_box
+        G_box = self.G_box if t < 12_000 else (5*self.G_box if t < 14_000 else self.G_box)
+        #G_box = self.G_box
         (T, T_heater) = state
         
         power_in = HEATER_VOLTAGE * HEATER_CURRENT if self.heater_on_in else 0.0
