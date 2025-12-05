@@ -7,3 +7,19 @@ coe.log
 __pycache__
 grafo.pdf
 .vscode/settings.json
+
+
+# macOS Finder junk
+.DS_Store
+**/.DS_Store
+._*
+
+# Python virtualenv
+.venv/
+venv/
+
+# Python bytecode / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
