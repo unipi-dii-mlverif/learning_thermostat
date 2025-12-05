@@ -10,7 +10,10 @@ import os
 
 SAVE_TO_DISK = True
 SAVE_DIR = "/var/tmp/learning_thermostat"
-
+# AGGIUNTO ---------------------------------------------
+USE_OFFLINE_RL = True  # True = usa modello RL pre-addestrato
+                       # False = comportamento originale (SlidingWindow online)
+# AGGIUNTO ---------------------------------------------
 class Model(Fmi2FMU):
     def __init__(self, reference_to_attr=None) -> None:
         super().__init__(reference_to_attr)
@@ -51,24 +54,60 @@ class Model(Fmi2FMU):
         self.n_false = 0
 
         self.swsm = SWSM(self.model, 33)
-
+ # MODIFICATO --------------------------------------------------------
     def exit_initialization_mode(self):
-        # Check if we should load a pre-trained model
-        if self.model_load_path and self.model_load_path.strip():
-            try:
-                print(f"Loading model from {self.model_load_path}...")
-                self.model.load_state_dict(torch.load(self.model_load_path))
-                self.model.eval()  # Set to evaluation mode
-                self.has_learnt = True
-                self.model_training = False
-                self.loss = 0.0
-                print(f"Model loaded successfully from {self.model_load_path}")
-            except Exception as e:
-                print(f"Error loading model from {self.model_load_path}: {e}")
-                # Continue with training mode if loading fails
-        
+        """
+        Decide se usare un modello pre-addestrato (offline RL)
+        o il training online SlidingWindow come nel progetto originale.
+        """
+
+        if USE_OFFLINE_RL:
+            # === Modalità OFFLINE RL / BC+RL ===
+            # 1) Se nessun path esplicito, prova a usare il default
+            if not (self.model_load_path and self.model_load_path.strip()):
+                default_path = os.path.join(SAVE_DIR, "thermostat_nn_model.pt")
+                if os.path.exists(default_path):
+                    print(f"[Model] No model_load_path provided, "
+                          f"but found pretrained weights at {default_path}")
+                    self.model_load_path = default_path
+
+            # 2) Se abbiamo un path, proviamo a caricare
+            if self.model_load_path and self.model_load_path.strip():
+                try:
+                    print(f"[Model] Loading model from {self.model_load_path}...")
+                    state_dict = torch.load(self.model_load_path, map_location="cpu")
+                    self.model.load_state_dict(state_dict)
+                    self.model.eval()
+                    self.has_learnt = True
+                    self.model_training = False   # disabilita SlidingWindow
+                    self.loss = 0.0
+                    print(f"[Model] Model loaded successfully from {self.model_load_path}")
+                except Exception as e:
+                    print(f"[Model] Error loading model from {self.model_load_path}: {e}")
+                    print("[Model] Falling back to online supervised training.")
+                    # in caso di errore, ci si comporta come nel ramo sotto
+
+        else:
+            # === Modalità ORIGINALE: solo SlidingWindow online ===
+            # Qui manteniamo il comportamento "vecchio":
+            # carica un modello solo se model_load_path è stato esplicitamente settato
+            if self.model_load_path and self.model_load_path.strip():
+                try:
+                    print(f"[Model] Loading model from {self.model_load_path}...")
+                    state_dict = torch.load(self.model_load_path, map_location="cpu")
+                    self.model.load_state_dict(state_dict)
+                    self.model.eval()
+                    self.has_learnt = True
+                    self.model_training = False
+                    self.loss = 0.0
+                    print(f"[Model] Model loaded successfully from {self.model_load_path}")
+                except Exception as e:
+                    print(f"[Model] Error loading model from {self.model_load_path}: {e}")
+                    print("[Model] Continuing with online supervised training.")
+
         return Fmi2Status.ok
 
+ # MODIFICATO --------------------------------------------------------
     def ctrl_step(self, time):
         if time < self.last_time + 1: #or True:
             return
