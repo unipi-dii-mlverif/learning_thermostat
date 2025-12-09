@@ -107,4 +107,5 @@ build/cmp/result.csv: build/cmp/ml/outputs.csv build/cmp/baseline/outputs.csv me
 clean:
 	rm -rf build
 	rm -f FMU/*.fmu
+	rm -f /var/tmp/learning_thermostat
 
