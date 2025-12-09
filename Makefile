@@ -17,6 +17,7 @@ dse: $(addprefix build/dse/,$(addsuffix /report.csv,$(DSE_TEMPS)))
 .SUFFIXES:
 .NOTPARALLEL:
 .PHONY: all dse clean
+.PRECIOUS: build/dse/%/stage2/spec.mabl build/dse/%/spec.mabl build/dse/%/mm_param.json build/dse/%/
 
 FMU/ThermostatML.fmu: $(shell find FMU/ThermostatML -print)
 	@rm -f $@ 
