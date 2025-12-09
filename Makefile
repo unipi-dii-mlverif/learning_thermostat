@@ -11,7 +11,7 @@ ALL_STOCK_FMU = FMU/Controller.fmu FMU/KalmanFilter.fmu FMU/Plant.fmu FMU/Room.f
 GRAPHS = build/g_env.pdf build/g_loss.pdf build/g_act.pdf
 DSE_TEMPS = $(shell cat temperatures)
 
-all: build/report.csv $(GRAPHS) dse | build/cmp/result.csv
+all: build/report.csv $(GRAPHS) dse build/cmp/result.csv
 dse: $(addprefix build/dse/,$(addsuffix /report.csv,$(DSE_TEMPS)))
 
 .SUFFIXES:
@@ -65,7 +65,7 @@ build/spec.mabl: $(ALL_STOCK_FMU) mm1.json simulation-config.json
 	$(MAESTRO) import sg1 simulation-config.json mm1.json -fsp FMU -output build
 
 # DSE
-build/dse/%/report.csv: build/dse/%/ build/dse/%/spec.mabl build/dse/%/stage2/spec.mabl
+build/dse/%/report.csv: build/dse/%/ |build/dse/%/spec.mabl build/dse/%/stage2/spec.mabl
 	@echo "Running simulation for $*"
 	$(MAESTRO) interpret build/dse/$*/spec.mabl -tms 10 -thz 1 -transition build/dse/$*/stage2 -output build/dse/$*/ 2>&1 | tee build/dse/$*/out.txt
 	touch $@
