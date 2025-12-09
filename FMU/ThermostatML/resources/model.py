@@ -8,12 +8,6 @@ from SlidingWindowStepModel import *
 import random
 import os
 
-SAVE_TO_DISK = True
-SAVE_DIR = "/var/tmp/learning_thermostat"
-# AGGIUNTO ---------------------------------------------
-USE_OFFLINE_RL = True  # True = usa modello RL pre-addestrato
-                       # False = comportamento originale (SlidingWindow online)
-# AGGIUNTO ---------------------------------------------
 class Model(Fmi2FMU):
     def __init__(self, reference_to_attr=None) -> None:
         super().__init__(reference_to_attr)
@@ -29,9 +23,12 @@ class Model(Fmi2FMU):
         self.has_learnt = False
         self.loss = 201.0
         self.model_load_path = ""
+        self.T_desired = 25.5
+        self.SAVE_TO_DISK = True
+        self.SAVE_DIR = "/var/tmp/learning_thermostat"
+        self.USE_OFFLINE_RL = False
         
         self.last_heater_status = False
-        self.T_desired = 25.5 #@TODO add to parameters
         self.commutation_time = 0
         self.last_time = float("-inf")
         self.threshold = 0.002 #0.001 
@@ -54,18 +51,17 @@ class Model(Fmi2FMU):
         self.n_false = 0
 
         self.swsm = SWSM(self.model, 33)
- # MODIFICATO --------------------------------------------------------
     def exit_initialization_mode(self):
         """
         Decide se usare un modello pre-addestrato (offline RL)
         o il training online SlidingWindow come nel progetto originale.
         """
 
-        if USE_OFFLINE_RL:
+        if self.USE_OFFLINE_RL:
             # === Modalità OFFLINE RL / BC+RL ===
             # 1) Se nessun path esplicito, prova a usare il default
             if not (self.model_load_path and self.model_load_path.strip()):
-                default_path = os.path.join(SAVE_DIR, "thermostat_nn_model.pt")
+                default_path = os.path.join(self.SAVE_DIR, "thermostat_nn_model.pt")
                 if os.path.exists(default_path):
                     print(f"[Model] No model_load_path provided, "
                           f"but found pretrained weights at {default_path}")
@@ -107,7 +103,6 @@ class Model(Fmi2FMU):
 
         return Fmi2Status.ok
 
- # MODIFICATO --------------------------------------------------------
     def ctrl_step(self, time):
         if time < self.last_time + 1: #or True:
             return
@@ -119,7 +114,7 @@ class Model(Fmi2FMU):
 
         heater_status = self.heater_on_in if not self.has_learnt else self.heater_on_out
         if self.last_heater_status != heater_status:
-            print("commuto @ ", time)
+            #print("commuto @ ", time)
             self.commutation_time = time
 
         # Poor men's balancing
@@ -185,17 +180,17 @@ class Model(Fmi2FMU):
     
     def terminate(self) -> int:
         # Save to disk only if we didn't load from disk
-        if SAVE_TO_DISK and not (self.model_load_path and self.model_load_path.strip()):        
-            os.makedirs(SAVE_DIR, exist_ok=True)
+        if self.SAVE_TO_DISK and not (self.model_load_path and self.model_load_path.strip()):        
+            os.makedirs(self.SAVE_DIR, exist_ok=True)
             
             # Save the model state dict
-            model_path = os.path.join(SAVE_DIR, "thermostat_nn_model.pt")
+            model_path = os.path.join(self.SAVE_DIR, "thermostat_nn_model.pt")
             print(f"Saving to {model_path}...")
             torch.save(self.model.state_dict(), model_path)
             print(f"Model saved to {model_path}")
             
             # Also save the entire model
-            full_model_path = os.path.join(SAVE_DIR, "thermostat_nn_full_model.pt")
+            full_model_path = os.path.join(self.SAVE_DIR, "thermostat_nn_full_model.pt")
             torch.save(self.model, full_model_path)
             print(f"Full model saved to {full_model_path}")
             

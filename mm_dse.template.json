@@ -1,0 +1,6 @@
+{
+  "parameters": {
+    "{ThermostatML}.ThermostatMLInstance.T_desired": %TEMP%,
+    "{Controller}.ControllerInstance.T_desired": %TEMP%
+  }
+}

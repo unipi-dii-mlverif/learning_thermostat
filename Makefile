@@ -3,16 +3,20 @@ _dummy := $(shell mkdir -p build/cmp)
 #ZIP_UTIL=zip -r
 ZIP_UTIL=7z a -tzip -mx=1
 
-MAESTRO ?= java -classpath ~/Scaricati/maestro-4.0.0-jar-with-dependencies.jar:/work/model/classpath org.intocps.maestro.Main
+MAESTRO_JAR ?= ~/Scaricati/maestro-4.0.0-jar-with-dependencies.jar
+MAESTRO ?= java -classpath $(MAESTRO_JAR):/work/model/classpath org.intocps.maestro.Main
 LIVE_LOSS ?= y # Requires Gnuplot
 
 ALL_STOCK_FMU = FMU/Controller.fmu FMU/KalmanFilter.fmu FMU/Plant.fmu FMU/Room.fmu FMU/Supervisor.fmu
 GRAPHS = build/g_env.pdf build/g_loss.pdf build/g_act.pdf
+DSE_TEMPS = $(shell cat temperatures)
 
-all: build/report.csv $(GRAPHS) build/cmp/result.csv
+all: build/report.csv $(GRAPHS) dse | build/cmp/result.csv
+dse: $(addprefix build/dse/,$(addsuffix /report.csv,$(DSE_TEMPS)))
 
 .SUFFIXES:
-.PHONY: all clean
+.NOTPARALLEL:
+.PHONY: all dse clean
 
 FMU/ThermostatML.fmu: $(shell find FMU/ThermostatML -print)
 	@rm -f $@ 
@@ -59,6 +63,25 @@ build/stage2/spec.mabl: $(ALL_STOCK_FMU) FMU/ThermostatML.fmu mm2.json simulatio
 
 build/spec.mabl: $(ALL_STOCK_FMU) mm1.json simulation-config.json
 	$(MAESTRO) import sg1 simulation-config.json mm1.json -fsp FMU -output build
+
+# DSE
+build/dse/%/report.csv: build/dse/%/ build/dse/%/spec.mabl build/dse/%/stage2/spec.mabl
+	@echo "Running simulation for $*"
+	$(MAESTRO) interpret build/dse/$*/spec.mabl -tms 10 -thz 1 -transition build/dse/$*/stage2 -output build/dse/$*/ 2>&1 | tee build/dse/$*/out.txt
+	touch $@
+
+build/dse/%/:
+	mkdir -p $@
+
+build/dse/%/mm_param.json:
+	sed "s/%TEMP%/$*/g" mm_dse.template.json > build/dse/$*/mm_param.json
+
+build/dse/%/stage2/spec.mabl: $(ALL_STOCK_FMU) FMU/ThermostatML.fmu build/dse/%/mm_param.json mm1.json simulation-config.json
+	$(MAESTRO) import sg1 build/dse/$*/mm_param.json simulation-config.json mm2.json -fsp FMU -output build/dse/$*/stage2
+
+build/dse/%/spec.mabl: $(ALL_STOCK_FMU) build/dse/%/mm_param.json mm1.json simulation-config.json
+	$(MAESTRO) import sg1 build/dse/$*/mm_param.json simulation-config.json mm1.json -fsp FMU -output build/dse/$*
+
 
 # targets for comparison
 build/cmp/baseline/spec.mabl: mm_cmp_baseline.json simulation-config-cmp.json $(ALL_STOCK_FMU)

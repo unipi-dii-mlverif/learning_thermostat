@@ -50,6 +50,22 @@
     <ScalarVariable name="model_load_path" valueReference="9" variability="fixed" causality="parameter">
       <String start=""/>
     </ScalarVariable>
+    <!--Index of variable = "11"-->
+    <ScalarVariable name="T_desired" valueReference="10" variability="fixed" causality="parameter">
+      <Real start="25.5"/>
+    </ScalarVariable>
+    <!--Index of variable = "12"-->
+    <ScalarVariable name="SAVE_TO_DISK" valueReference="11" variability="fixed" causality="parameter">
+      <Boolean start="true"/>
+    </ScalarVariable>
+    <!--Index of variable = "13"-->
+    <ScalarVariable name="SAVE_DIR" valueReference="12" variability="fixed" causality="parameter">
+      <String start="/var/tmp/learning_thermostat"/>
+    </ScalarVariable>
+    <!--Index of variable = "14"-->
+    <ScalarVariable name="USE_OFFLINE_RL" valueReference="13" variability="fixed" causality="parameter">
+      <Boolean start="false"/>
+    </ScalarVariable>
   </ModelVariables>
   <ModelStructure>
     <Outputs>
