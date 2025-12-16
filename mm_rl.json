@@ -1,0 +1,61 @@
+{
+  "algorithm": {
+    "size": 5,
+    "type": "fixed-step"
+  },
+  "connections": {
+    "{Controller}.ControllerInstance.heater_on_out": [
+      "{ThermostatML}.ThermostatMLInstance.heater_on_in"
+    ],
+    "{KalmanFilter}.KalmanFilterInstance.T_bair_out": [
+      "{Supervisor}.SupervisorInstance.T_bair_in"
+    ],
+    "{KalmanFilter}.KalmanFilterInstance.T_heater_out": [
+      "{Supervisor}.SupervisorInstance.T_heater_in"
+    ],
+    "{Plant}.PlantInstance.T_bair_out": [
+      "{Controller}.ControllerInstance.T_bair_in",
+      "{Supervisor}.SupervisorInstance.T_bair_plant_in",
+      "{KalmanFilter}.KalmanFilterInstance.T_bair_in",
+      "{ThermostatML}.ThermostatMLInstance.T_bair_in"
+    ],
+    "{Room}.RoomInstance.T_room_out": [
+      "{Plant}.PlantInstance.T_room_in",
+      "{Supervisor}.SupervisorInstance.T_room_in",
+      "{KalmanFilter}.KalmanFilterInstance.T_room_in"
+    ],
+    "{Supervisor}.SupervisorInstance.C_out": [
+      "{Controller}.ControllerInstance.C_in",
+      "{ThermostatML}.ThermostatMLInstance.C_in"
+    ],
+    "{Supervisor}.SupervisorInstance.H_out": [
+      "{Controller}.ControllerInstance.H_in",
+      "{ThermostatML}.ThermostatMLInstance.H_in"
+    ],
+    "{Supervisor}.SupervisorInstance.LL_out": [
+      "{Controller}.ControllerInstance.LL_in",
+      "{ThermostatML}.ThermostatMLInstance.LL_in"
+    ],
+    "{Supervisor}.SupervisorInstance.UL_out": [
+      "{Controller}.ControllerInstance.UL_in",
+      "{ThermostatML}.ThermostatMLInstance.UL_in"
+    ],
+    "{ThermostatML}.ThermostatMLInstance.heater_on_out": [
+      "{Plant}.PlantInstance.heater_on_in",
+      "{Supervisor}.SupervisorInstance.heater_on_in",
+      "{KalmanFilter}.KalmanFilterInstance.heater_on_in"
+    ]
+  },
+  "fmus": {
+    "{Controller}": "Controller.fmu",
+    "{KalmanFilter}": "KalmanFilter.fmu",
+    "{Plant}": "Plant.fmu",
+    "{Room}": "Room.fmu",
+    "{Supervisor}": "Supervisor.fmu",
+    "{ThermostatML}": "ThermostatML.fmu"
+  },
+  "parameters": {
+    "{KalmanFilter}.KalmanFilterInstance.STEP_SIZE": 5.0,
+    "{Plant}.PlantInstance.delay": -1
+  }
+}

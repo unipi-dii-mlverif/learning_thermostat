@@ -9,7 +9,8 @@
     ],
     "{Plant}.PlantInstance": [
       "T_bair_out",
-      "T_heater_out"
+      "T_heater_out",
+      "heater_on_in"
     ],
     "{Room}.RoomInstance": [
       "T_room_out"

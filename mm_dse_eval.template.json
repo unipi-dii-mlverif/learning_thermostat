@@ -1,0 +1,15 @@
+{
+  "parameters": {
+    "{ThermostatML}.ThermostatMLInstance.T_desired": %TEMP%,
+    "{Controller}.ControllerInstance.T_desired": %TEMP%,
+    "{ThermostatML}.ThermostatMLInstance.MODE": "EVAL",
+    "{ThermostatML}.ThermostatMLInstance.SAVE_TO_DISK": false,
+    "{ThermostatML}.ThermostatMLInstance.USE_OFFLINE_RL": false,
+    "{ThermostatML}.ThermostatMLInstance.model_load_path": "/var/tmp/learning_thermostat/thermostat_policy.pt",
+    "{ThermostatML}.ThermostatMLInstance.model_save_path": "/var/tmp/learning_thermostat/thermostat_policy.pt",
+    "{ThermostatML}.ThermostatMLInstance.reward_alpha": 0.5,
+    "{ThermostatML}.ThermostatMLInstance.reward_beta": 0.02,
+    "{ThermostatML}.ThermostatMLInstance.reward_lambda_switch": 0.15,
+    "{ThermostatML}.ThermostatMLInstance.BC_COEF": 0.5
+}
+}
