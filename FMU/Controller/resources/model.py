@@ -47,7 +47,7 @@ class Model(Fmi2FMU):
         if self.current_state == "Waiting":
             self.heater_on_out = False
             if 0 < self.next_time <= time:
-                if self.H_in > 0.0 and self.T_bair_in <= self.T_desired:
+                if self.H_in > 0.0 and self.T_bair_in <= self.T_desired + self.UL_in:
                     print(f"Starting heating, after wait, t={time}, T={self.T_bair_in}, {self.H_in}, {self.T_desired}")
                     self.current_state = "Heating"
                     self.next_time = time + self.H_in
