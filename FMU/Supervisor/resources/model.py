@@ -7,7 +7,7 @@ ANOMALY_THRESHOLD = 3.0
 class Model(Fmi2FMU):
     def __init__(self, reference_to_attr=None) -> None:
         super().__init__(reference_to_attr)
-        self.LL_out = 2.0
+        self.LL_out = 5.0
         self.UL_out = 2.0
         self.H_out = 20.0
         self.C_out = 30.0
