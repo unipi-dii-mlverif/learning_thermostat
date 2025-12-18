@@ -14,9 +14,9 @@ DSE_TEMPS = $(shell cat temperatures)
 RUN_DIR ?= /var/tmp/learning_thermostat
 
 # Policies
-POLICY_BC := $(RUN_DIR)/policy_bc.pth
-POLICY_RL := $(RUN_DIR)/policy_rl.pth
-POLICY_ACTIVE := $(RUN_DIR)/policy_active.pth
+POLICY_BC := $(RUN_DIR)/thermostat_policy_bc.pt
+POLICY_RL := $(RUN_DIR)/thermostat_policy_rl.pt
+POLICY_ACTIVE := $(RUN_DIR)/thermostat_policy.pt
 
 all: build/report.csv $(GRAPHS) dse
 dse: $(addprefix build/dse/,$(addsuffix /report.csv,$(DSE_TEMPS)))
@@ -100,8 +100,8 @@ build/dse/%/train.done: build/dse/%/spec.mabl build/dse/%/stage2/spec.mabl | bui
 	THERMOSTAT_MODE=train THERMOSTAT_RUN_DIR=$(RUN_DIR) \
 		$(MAESTRO) interpret build/dse/$*/spec.mabl -tms 10 -thz 1 -transition build/dse/$*/stage2 -output build/dse/$*/ 2>&1 | tee build/dse/$*/out_train.txt
 	@# Copy final policies
-	@if [ -f "$(POLICY_BC)" ]; then cp $(POLICY_BC) build/dse/$*/policy_bc.pth; fi
-	@if [ -f "$(POLICY_RL)" ]; then cp $(POLICY_RL) build/dse/$*/policy_rl.pth; fi
+	@if [ -f "$(POLICY_BC)" ]; then cp $(POLICY_BC) build/dse/$*/thermostat_policy_bc.pt; fi
+	@if [ -f "$(POLICY_RL)" ]; then cp $(POLICY_RL) build/dse/$*/thermostat_policy_rl.pt; fi
 	@touch $@
 
 # --- EVAL BC ---
@@ -118,7 +118,7 @@ build/dse/%/eval_bc/stage2/outputs.csv: build/dse/%/train.done build/dse/%/eval_
 	@echo "=== [DSE $*] EVAL BC policy ==="
 	@rm -rf $(RUN_DIR)
 	@mkdir -p $(RUN_DIR)
-	@cp build/dse/$*/policy_bc.pth $(POLICY_RL)
+	@cp build/dse/$*/thermostat_policy_bc.pt $(POLICY_RL)
 	THERMOSTAT_MODE=eval THERMOSTAT_RUN_DIR=$(RUN_DIR) \
 		$(MAESTRO) interpret build/dse/$*/eval_bc/spec.mabl -tms 10 -thz 1 -transition build/dse/$*/eval_bc/stage2 -output build/dse/$*/eval_bc 2>&1 | tee build/dse/$*/eval_bc/out.txt
 
@@ -136,7 +136,7 @@ build/dse/%/eval_rl/stage2/outputs.csv: build/dse/%/train.done build/dse/%/eval_
 	@echo "=== [DSE $*] EVAL RL policy ==="
 	@rm -rf $(RUN_DIR)
 	@mkdir -p $(RUN_DIR)
-	@cp build/dse/$*/policy_rl.pth $(POLICY_RL)
+	@cp build/dse/$*/thermostat_policy_rl.pt $(POLICY_RL)
 	THERMOSTAT_MODE=eval THERMOSTAT_RUN_DIR=$(RUN_DIR) \
 		$(MAESTRO) interpret build/dse/$*/eval_rl/spec.mabl -tms 10 -thz 1 -transition build/dse/$*/eval_rl/stage2 -output build/dse/$*/eval_rl 2>&1 | tee build/dse/$*/eval_rl/out.txt
 

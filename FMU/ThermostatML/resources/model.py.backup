@@ -1,0 +1,511 @@
+import os
+import random
+from typing import Optional, Dict, Tuple
+from collections import deque
+
+import numpy as np
+import torch
+from torch import nn
+import torch.nn.functional as F
+
+from fmi2 import Fmi2FMU, Fmi2Status
+from SlidingWindowStepModel import SWSM
+
+
+class PolicyNet(nn.Module):
+    """Binary policy network with Sigmoid output."""
+    def __init__(self, state_dim: int = 5):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(state_dim, 64),
+            nn.LeakyReLU(),
+            nn.Linear(64, 128),
+            nn.ReLU(),
+            nn.Linear(128, 128),
+            nn.Dropout(0.1),
+            nn.ReLU(),
+            nn.Linear(128, 64),
+            nn.LeakyReLU(),
+            nn.Linear(64, 1),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return torch.clamp(self.net(x), 1e-6, 1.0 - 1e-6)
+
+
+class TwinQ(nn.Module):
+    """Twin Q networks for SAC."""
+    def __init__(self, state_dim: int = 5, hidden_dim: int = 128):
+        super().__init__()
+        
+        def make_q():
+            return nn.Sequential(
+                nn.Linear(state_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, 2),
+            )
+        
+        self.q1 = make_q()
+        self.q2 = make_q()
+    
+    def forward(self, s: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        return self.q1(s), self.q2(s)
+
+
+class OnlineSAC:
+    """Lightweight online SAC for binary action space."""
+    def __init__(self, actor: PolicyNet, state_dim: int = 5):
+        self.actor = actor
+        self.critic = TwinQ(state_dim, hidden_dim=128)
+        self.critic_target = TwinQ(state_dim, hidden_dim=128)
+        self.critic_target.load_state_dict(self.critic.state_dict())
+        
+        # Hyperparams - MORE CONSERVATIVE
+        self.gamma = 0.99
+        self.tau = 0.005
+        self.alpha = 0.05  # Lower entropy bonus
+        self.lr = 3e-5     # Very low LR for stability
+        
+        # Optimizers
+        self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=self.lr)
+        self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=self.lr)
+        
+        # Replay buffer
+        self.buffer = deque(maxlen=5000)  # Larger buffer
+        self.batch_size = 64  # Larger batches
+        self.update_every = 5  # More frequent updates
+        self.step_count = 0
+    
+    def add_transition(self, s, a, r, sp, done):
+        """Add (s, a, r, s', done) to buffer."""
+        self.buffer.append((s, a, r, sp, done))
+    
+    def update(self) -> Optional[Dict[str, float]]:
+        """Perform one SAC update if buffer is large enough."""
+        if len(self.buffer) < self.batch_size * 2:  # Wait for more samples
+            return None
+        
+        # Sample batch
+        batch = random.sample(self.buffer, self.batch_size)
+        s_b = torch.stack([x[0] for x in batch])
+        a_b = torch.tensor([[x[1]] for x in batch], dtype=torch.int64)
+        r_b = torch.tensor([[x[2]] for x in batch], dtype=torch.float32)
+        sp_b = torch.stack([x[3] for x in batch])
+        done_b = torch.tensor([[x[4]] for x in batch], dtype=torch.float32)
+        
+        # Critic update
+        with torch.no_grad():
+            # Next state value
+            p1_sp = self.actor(sp_b)
+            p0_sp = 1.0 - p1_sp
+            pi_sp = torch.cat([p0_sp, p1_sp], dim=1)
+            log_pi_sp = torch.log(pi_sp + 1e-8)  # Add epsilon for stability
+            
+            q1_sp, q2_sp = self.critic_target(sp_b)
+            qmin_sp = torch.min(q1_sp, q2_sp)
+            v_sp = (pi_sp * (qmin_sp - self.alpha * log_pi_sp)).sum(dim=1, keepdim=True)
+            y = r_b + (1.0 - done_b) * self.gamma * v_sp
+        
+        q1_s, q2_s = self.critic(s_b)
+        q1_sa = q1_s.gather(1, a_b)
+        q2_sa = q2_s.gather(1, a_b)
+        
+        critic_loss = F.mse_loss(q1_sa, y) + F.mse_loss(q2_sa, y)
+        
+        self.critic_opt.zero_grad()
+        critic_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.critic.parameters(), 0.5)  # Tighter clipping
+        self.critic_opt.step()
+        
+        # Actor update
+        p1_s = self.actor(s_b)
+        p0_s = 1.0 - p1_s
+        pi_s = torch.cat([p0_s, p1_s], dim=1)
+        log_pi_s = torch.log(pi_s + 1e-8)
+        
+        q1_s2, q2_s2 = self.critic(s_b)
+        qmin_s = torch.min(q1_s2, q2_s2)
+        
+        actor_loss = (pi_s * (self.alpha * log_pi_s - qmin_s)).sum(dim=1).mean()
+        
+        self.actor_opt.zero_grad()
+        actor_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 0.5)  # Tighter clipping
+        self.actor_opt.step()
+        
+        # Soft target update
+        with torch.no_grad():
+            for tp, p in zip(self.critic_target.parameters(), self.critic.parameters()):
+                tp.data.mul_(1.0 - self.tau).add_(self.tau * p.data)
+        
+        return {
+            "critic_loss": float(critic_loss.item()),
+            "actor_loss": float(actor_loss.item()),
+        }
+
+
+def _normalize_policy_state_dict(sd: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    """Backward compatibility for old state_dicts."""
+    if not sd:
+        return sd
+    if any(k.startswith("net.") for k in sd.keys()):
+        return sd
+    return {f"net.{k}": v for k, v in sd.items()}
+
+
+class Model(Fmi2FMU):
+    def __init__(self, reference_to_attr: Optional[dict] = None) -> None:
+        super().__init__(reference_to_attr)
+        
+        # Inputs
+        self.LL_in = -1.0
+        self.UL_in = -1.0
+        self.H_in = -1.0
+        self.C_in = -1.0
+        self.T_bair_in = -1.0
+        self.heater_on_in = False  # baseline action
+        
+        # Outputs
+        self.heater_on_out = False
+        
+        # Config
+        self.T_desired = 25.5
+        self.SAVE_DIR = os.getenv("THERMOSTAT_RUN_DIR", "/var/tmp/learning_thermostat")
+        self.MODE = os.getenv("THERMOSTAT_MODE", "train")  # train | eval
+        
+        # Training phases (seconds)
+        self.BC_PHASE_END = 3000.0    # BC training until this time
+        self.RL_PHASE_END = 7000.0    # Online RL until this time
+        self.EVAL_PHASE_END = 10000.0 # Evaluation (no training)
+        
+        # BC config
+        self.bc_threshold = 0.002
+        self.bc_batch_size = 33
+        
+        # RL config - MORE CONSERVATIVE
+        self.epsilon = 0.02  # Very low exploration
+        self.epsilon_decay = 0.995  # Decay exploration over time
+        self.min_epsilon = 0.01
+        
+        # SAC tuning for stability
+        self.sac_lr = 3e-5  # Very low learning rate
+        self.sac_update_every = 5  # More frequent updates
+        
+        # Safety config
+        self.SAFETY_MARGIN = 2.0  # Safety margin around LL/UL
+        self.MAX_TEMP_DELTA = 1.0  # Max allowed temp change per second
+        
+        # State
+        self.phase = "bc"  # bc | rl | eval
+        self.has_learnt = False
+        self.bc_loss = 201.0
+        
+        self.last_heater_status = False
+        self.commutation_time = 0.0
+        self.last_time = float("-inf")
+        self.last_temp = None  # For safety checks
+        
+        # For BC balancing
+        self.n_true = 0
+        self.n_false = 0
+        
+        # Previous state for RL transitions
+        self.prev_state = None
+        self.prev_action = None
+        self.prev_time = None
+        
+        # Emergency shutdown
+        self.emergency_count = 0
+        self.max_emergency = 10
+        
+        # Paths
+        self.POLICY_BC_PATH = os.path.join(self.SAVE_DIR, "thermostat_policy_bc.pt")
+        self.POLICY_RL_PATH = os.path.join(self.SAVE_DIR, "thermostat_policy_rl.pt")
+        self.POLICY_ACTIVE_PATH = os.path.join(self.SAVE_DIR, "thermostat_policy.pt")
+        
+        # Model initialization
+        self.model = PolicyNet(state_dim=5)
+        self.swsm = SWSM(
+            self.model,
+            threshold=self.bc_threshold,
+            batch_size=self.bc_batch_size,
+            optimiser=torch.optim.Adam(self.model.parameters(), lr=0.0001)
+        )
+        self.sac = None  # Will be initialized when entering RL phase
+    
+    def setupExperiment(self, start_time):
+        os.makedirs(self.SAVE_DIR, exist_ok=True)
+        
+        # Eval mode: load existing policy
+        if self.MODE == "eval":
+            policy_path = self.POLICY_RL_PATH
+            if os.path.exists(policy_path):
+                try:
+                    sd = torch.load(policy_path, map_location="cpu", weights_only=True)
+                    sd = _normalize_policy_state_dict(sd)
+                    self.model.load_state_dict(sd)
+                    self.model.eval()
+                    self.phase = "eval"
+                    self.has_learnt = True
+                    print(f"[ThermostatML] EVAL mode: loaded policy from {policy_path}")
+                    return Fmi2Status.ok
+                except Exception as e:
+                    print(f"[ThermostatML] ERROR loading policy: {e}")
+                    return Fmi2Status.error
+            else:
+                print(f"[ThermostatML] ERROR: eval mode but no policy found at {policy_path}")
+                return Fmi2Status.error
+        
+        # Training mode: start with BC
+        self.phase = "bc"
+        self.has_learnt = False
+        print("[ThermostatML] TRAIN mode: starting BC phase")
+        return Fmi2Status.ok
+    
+    def _safe_action(self, time: float, state: torch.Tensor, proposed_action: int) -> Tuple[int, bool]:
+        """
+        CRITICAL SAFETY OVERRIDE.
+        Returns: (action, was_overridden)
+        """
+        T = float(state[0].item())
+        LL = float(self.T_desired - self.LL_in)
+        UL = float(self.T_desired + self.UL_in)
+        
+        # Hard safety limits
+        critical_low = LL - self.SAFETY_MARGIN
+        critical_high = UL + self.SAFETY_MARGIN
+        
+        # Check for extreme temperatures
+        if T < 15.0 or T > 35.0:
+            self.emergency_count += 1
+            print(f"[EMERGENCY] Extreme temp: {T:.1f}°C at t={time:.1f}s (count={self.emergency_count})")
+            if self.emergency_count > self.max_emergency:
+                print(f"[EMERGENCY] Too many violations, stopping RL exploration")
+                # Revert to BC policy
+                self.epsilon = 0.0
+            
+            # Emergency override
+            if T > 30.0:
+                return 0, True  # Force cooling
+            else:
+                return 1, True  # Force heating
+        
+        # Check temperature change rate (if we have history)
+        if self.last_temp is not None:
+            delta_t = T - self.last_temp
+            if abs(delta_t) > self.MAX_TEMP_DELTA:
+                print(f"[WARNING] Large temp change: {delta_t:.2f}°C/s at t={time:.1f}s")
+        
+        # Safety boundaries
+        if T < critical_low:
+            return 1, True  # Force heating
+        elif T > critical_high:
+            return 0, True  # Force cooling
+        
+        # Within safe zone: allow proposed action
+        return proposed_action, False
+    
+    def _build_features(self, time: float) -> torch.Tensor:
+        """Build 5D state vector."""
+        heater_status = self.heater_on_in if not self.has_learnt else self.heater_on_out
+        
+        if self.last_heater_status != heater_status:
+            self.commutation_time = time
+        self.last_heater_status = heater_status
+        
+        return torch.tensor([
+            float(self.T_bair_in),
+            float(self.T_desired - self.LL_in),
+            float(self.T_desired + self.UL_in),
+            1.0 if (time - self.commutation_time) > float(self.C_in) else -1.0,
+            1.0 if (time - self.commutation_time) > float(self.H_in) else -1.0,
+        ], dtype=torch.float32)
+    
+    def _compute_reward(self, time: float, state: torch.Tensor, action: int, was_overridden: bool) -> float:
+        """
+        Reward function with STRONG penalties for violations.
+        """
+        T = float(state[0].item())
+        LL = float(self.T_desired - self.LL_in)
+        UL = float(self.T_desired + self.UL_in)
+        
+        # Base comfort reward: exponential penalty outside range
+        if T < LL:
+            distance = LL - T
+            comfort_penalty = -50.0 * (distance ** 2)  # Quadratic penalty
+        elif T > UL:
+            distance = T - UL
+            comfort_penalty = -50.0 * (distance ** 2)  # Quadratic penalty
+        else:
+            # Reward for being in range, better if closer to center
+            center = (LL + UL) / 2
+            distance_from_center = abs(T - center)
+            comfort_penalty = 1.0 - 0.5 * distance_from_center  # Positive reward
+        
+        # Extreme penalty for dangerous temperatures
+        if T < 15.0 or T > 35.0:
+            extreme_penalty = -500.0
+        else:
+            extreme_penalty = 0.0
+        
+        # Penalty for safety overrides (agent should learn to avoid them)
+        override_penalty = -10.0 if was_overridden else 0.0
+        
+        # Late commutation penalty
+        late_penalty = 0.0
+        if T < LL and action == 0:
+            late_penalty = -20.0
+        elif T > UL and action == 1:
+            late_penalty = -20.0
+        
+        # Small energy penalty
+        energy_penalty = -0.01 if action == 1 else 0.0
+        
+        total = comfort_penalty + extreme_penalty + override_penalty + late_penalty + energy_penalty
+        
+        # Clip reward to prevent extreme values
+        return float(np.clip(total, -100.0, 10.0))
+    
+    def ctrl_step(self, time: float):
+        """Main control step with phase transitions."""
+        # 1s guard
+        if time < self.last_time + 1:
+            return
+        self.last_time = time
+        
+        # Phase transitions
+        if time >= self.RL_PHASE_END and self.phase == "rl":
+            print(f"[ThermostatML] Entering EVAL phase @ {time:.1f}s")
+            self.phase = "eval"
+            self.model.eval()
+            # Save RL policy
+            torch.save(self.model.state_dict(), self.POLICY_RL_PATH)
+            print(f"[ThermostatML] Saved RL policy to {self.POLICY_RL_PATH}")
+            print(f"[ThermostatML] Final epsilon: {self.epsilon:.4f}, Emergency count: {self.emergency_count}")
+        
+        elif time >= self.BC_PHASE_END and self.phase == "bc":
+            print(f"[ThermostatML] Entering RL phase @ {time:.1f}s")
+            self.phase = "rl"
+            self.has_learnt = True
+            self.model.eval()  # No more BC training
+            # Save BC policy
+            torch.save(self.model.state_dict(), self.POLICY_BC_PATH)
+            print(f"[ThermostatML] Saved BC policy to {self.POLICY_BC_PATH}")
+            # Initialize SAC
+            self.sac = OnlineSAC(self.model, state_dim=5)
+            self.sac.lr = self.sac_lr
+            self.sac.update_every = self.sac_update_every
+            # Re-init optimizers with new LR
+            self.sac.actor_opt = torch.optim.Adam(self.sac.actor.parameters(), lr=self.sac.lr)
+            self.sac.critic_opt = torch.optim.Adam(self.sac.critic.parameters(), lr=self.sac.lr)
+            self.model.train()  # Back to train for RL
+            print(f"[ThermostatML] Starting RL with epsilon={self.epsilon:.3f}")
+        
+        # Build current state
+        x = self._build_features(time)
+        
+        # ===== BC PHASE =====
+        if self.phase == "bc":
+            # BC training (imitate baseline)
+            if (self.n_false != 0 and not self.heater_on_in and 
+                ((self.n_false / (self.n_true + self.n_false)) > 0.5 or random.random() <= 0.1)):
+                return
+            
+            if self.heater_on_in:
+                self.n_true += 1
+            else:
+                self.n_false += 1
+            
+            target = torch.tensor([1.0 if self.heater_on_in else 0.0], dtype=torch.float32)
+            _, loss = self.swsm.accumulate_and_step(x, training=True, target_tensor=target)
+            if loss is not None:
+                self.bc_loss = float(loss.item())
+            
+            # During BC: output = baseline
+            self.heater_on_out = bool(self.heater_on_in)
+            self.last_temp = float(self.T_bair_in)
+            return
+        
+        # ===== RL PHASE =====
+        if self.phase == "rl":
+            # Epsilon-greedy exploration with decay
+            if random.random() < self.epsilon:
+                # Explore: random action
+                action = random.randint(0, 1)
+            else:
+                # Exploit: use policy
+                with torch.no_grad():
+                    p = float(self.model(x.unsqueeze(0)).item())
+                action = 1 if p >= 0.5 else 0
+            
+            # CRITICAL: Apply safety override
+            action, was_overridden = self._safe_action(time, x, action)
+            action = int(action)
+            self.heater_on_out = bool(action)
+            
+            # Compute reward with override info
+            reward = self._compute_reward(time, x, action, was_overridden)
+            
+            # Store transition if we have previous state
+            if self.prev_state is not None:
+                done = 0.0  # Episode continues
+                self.sac.add_transition(self.prev_state, self.prev_action, reward, x, done)
+                
+                # Update SAC periodically
+                self.sac.step_count += 1
+                if self.sac.step_count % self.sac.update_every == 0:
+                    stats = self.sac.update()
+                    if stats and self.sac.step_count % 100 == 0:
+                        print(f"[RL @ {time:.1f}s] critic_loss={stats['critic_loss']:.2f}, "
+                              f"actor_loss={stats['actor_loss']:.2f}, buffer={len(self.sac.buffer)}, "
+                              f"T={float(x[0].item()):.1f}°C, reward={reward:.2f}, eps={self.epsilon:.3f}, "
+                              f"overrides={self.emergency_count}")
+            
+            # Decay epsilon
+            self.epsilon = max(self.min_epsilon, self.epsilon * self.epsilon_decay)
+            
+            # Update prev state
+            self.prev_state = x
+            self.prev_action = action
+            self.prev_time = time
+            self.last_temp = float(self.T_bair_in)
+            return
+        
+        # ===== EVAL PHASE =====
+        if self.phase == "eval":
+            # Pure inference
+            with torch.no_grad():
+                p = float(self.model(x.unsqueeze(0)).item())
+            self.heater_on_out = (p >= 0.5)
+            return
+    
+    def do_step(self, current_time, step_size, no_step_prior):
+        self.ctrl_step(float(current_time))
+        return Fmi2Status.ok
+    
+    def terminate(self) -> int:
+        """Save final policies."""
+        os.makedirs(self.SAVE_DIR, exist_ok=True)
+        
+        try:
+            # Always save current state as active policy
+            torch.save(self.model.state_dict(), self.POLICY_ACTIVE_PATH)
+            print(f"[ThermostatML] Saved active policy to {self.POLICY_ACTIVE_PATH}")
+            
+            # If we finished RL phase, RL policy is already saved
+            if self.phase == "eval" and os.path.exists(self.POLICY_RL_PATH):
+                print(f"[ThermostatML] RL policy available at {self.POLICY_RL_PATH}")
+            elif self.phase == "bc" and os.path.exists(self.POLICY_BC_PATH):
+                print(f"[ThermostatML] BC policy available at {self.POLICY_BC_PATH}")
+            
+            print(f"[ThermostatML] Training summary:")
+            print(f"  - Final phase: {self.phase}")
+            print(f"  - Emergency overrides: {self.emergency_count}")
+            print(f"  - Final epsilon: {self.epsilon:.4f}")
+        except Exception as e:
+            print(f"[ThermostatML] ERROR saving: {e}")
+        
+        return Fmi2Status.ok
