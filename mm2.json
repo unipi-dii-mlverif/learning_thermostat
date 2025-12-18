@@ -45,7 +45,8 @@
   },
   "parameters": {
     "{Plant}.PlantInstance.delay": -1,
-    "{KalmanFilter}.KalmanFilterInstance.STEP_SIZE": 5.0
+    "{KalmanFilter}.KalmanFilterInstance.STEP_SIZE": 5.0,
+    "{ThermostatML}.ThermostatMLInstance.model_load_path": "/var/tmp/learning_thermostat/thermostat_nn_model.pt"
   },
   "algorithm": {
     "type": "fixed-step",
