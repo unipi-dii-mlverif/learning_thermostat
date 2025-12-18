@@ -11,6 +11,7 @@ class Model(Fmi2FMU):
         super().__init__(reference_to_attr)
         self.T_room_in = 21.0
         self.heater_on_in = False
+        self.open_lid_in = False
         self.T_bair_out = 18.0
         self.G_box = 0.73572788
         self.C_air = 68.20829072
@@ -21,9 +22,8 @@ class Model(Fmi2FMU):
     
     def state_der(self, t, state):
 
-        # Comment out to remove dummy fault injection that simulates lid opening.
-        #G_box = self.G_box if t < 800 else (5*self.G_box if t < 1500 else self.G_box)
-        G_box = self.G_box
+        # G_box increases by 5x when lid is open (increased heat loss)
+        G_box = (5.0 * self.G_box) if self.open_lid_in else self.G_box
         (T, T_heater) = state
         
         power_in = HEATER_VOLTAGE * HEATER_CURRENT if self.heater_on_in else 0.0

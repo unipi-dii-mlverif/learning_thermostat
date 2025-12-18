@@ -19,38 +19,42 @@
       <Boolean start="false" />
     </ScalarVariable>
     <!--Index of variable = "3"-->
-    <ScalarVariable name="T_bair_out" valueReference="2" variability="continuous" causality="output" initial="exact">
-      <Real start="18.0"/>
+    <ScalarVariable name="open_lid_in" valueReference="2" variability="discrete" causality="input">
+      <Boolean start="false" />
     </ScalarVariable>
     <!--Index of variable = "4"-->
-    <ScalarVariable name="G_box" valueReference="3" variability="fixed" causality="parameter">
-      <Real start="0.7"/>
-    </ScalarVariable>
-    <!--Index of variable = "5"-->
-    <ScalarVariable name="C_air" valueReference="4" variability="fixed" causality="parameter">
-      <Real start="68.2"/>
-    </ScalarVariable>
-    <!--Index of variable = "6"-->
-    <ScalarVariable name="C_heater" valueReference="5" variability="fixed" causality="parameter">
-      <Real start="243.5"/>
-    </ScalarVariable>
-    <!--Index of variable = "7"-->
-    <ScalarVariable name="G_heater" valueReference="6" variability="fixed" causality="parameter">
-      <Real start="0.9"/>
-    </ScalarVariable>
-    <!--Index of variable = "8"-->
-    <ScalarVariable name="T_heater_out" valueReference="7" variability="continuous" causality="output" initial="exact">
+    <ScalarVariable name="T_bair_out" valueReference="3" variability="continuous" causality="output" initial="exact">
       <Real start="18.0"/>
     </ScalarVariable>
+    <!--Index of variable = "5"-->
+    <ScalarVariable name="G_box" valueReference="4" variability="fixed" causality="parameter">
+      <Real start="0.7"/>
+    </ScalarVariable>
+    <!--Index of variable = "6"-->
+    <ScalarVariable name="C_air" valueReference="5" variability="fixed" causality="parameter">
+      <Real start="68.2"/>
+    </ScalarVariable>
+    <!--Index of variable = "7"-->
+    <ScalarVariable name="C_heater" valueReference="6" variability="fixed" causality="parameter">
+      <Real start="243.5"/>
+    </ScalarVariable>
     <!--Index of variable = "8"-->
-    <ScalarVariable name="delay" valueReference="8" variability="fixed" causality="parameter" description="Delay of plant at each step" initial="exact">
+    <ScalarVariable name="G_heater" valueReference="7" variability="fixed" causality="parameter">
+      <Real start="0.9"/>
+    </ScalarVariable>
+    <!--Index of variable = "9"-->
+    <ScalarVariable name="T_heater_out" valueReference="8" variability="continuous" causality="output" initial="exact">
+      <Real start="18.0"/>
+    </ScalarVariable>
+    <!--Index of variable = "10"-->
+    <ScalarVariable name="delay" valueReference="9" variability="fixed" causality="parameter" description="Delay of plant at each step" initial="exact">
         <Real start="-1.0"/>
     </ScalarVariable>
   </ModelVariables>
   <ModelStructure>
     <Outputs>
-      <Unknown index="3" dependencies="" />
-      <Unknown index="8" dependencies="" />
+      <Unknown index="4" dependencies="" />
+      <Unknown index="9" dependencies="" />
     </Outputs>
   </ModelStructure>
 </fmiModelDescription>
