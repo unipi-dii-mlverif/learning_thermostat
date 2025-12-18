@@ -110,8 +110,8 @@ class Model(Fmi2FMU):
         
         # RL phase tracking
         self.phase = "bc"  # "bc" -> "rl" -> "eval"
-        self.BC_PHASE_END = 3000.0
-        self.RL_PHASE_END = 9000.0
+        self.BC_PHASE_END = 3_000.0
+        self.RL_PHASE_END = 12_000.0
         self.rl_agent: Optional[SimpleRL] = None
         self.rl_update_count = 0
         self.rl_update_every = 50  # Update every N steps
@@ -170,25 +170,27 @@ class Model(Fmi2FMU):
             reward -= 5.0 * distance  # Proportional penalty
         
         # 2. TIMING CONSTRAINT REWARD
-        # Check if action respects timing constraints
+        # Only reward respecting timing, no penalty for switching too early
         switched = (action != self.last_heater_status)
         
         if switched:
-            # Check if we're switching too soon
             if action == 1:  # Turning on
                 min_time = self.C_in  # Should wait at least C_in after turning off
-                if time_since_comm < min_time:
-                    reward -= 3.0  # Violated cooling constraint
-                    self.total_violations += 1
-                else:
-                    reward += 0.3  # Respected timing
+                if time_since_comm >= min_time:
+                    reward += 0.5  # Respected timing constraint
             else:  # Turning off
                 min_time = self.H_in  # Should wait at least H_in after turning on
-                if time_since_comm < min_time:
-                    reward -= 3.0  # Violated heating constraint
-                    self.total_violations += 1
-                else:
-                    reward += 0.3  # Respected timing
+                if time_since_comm >= min_time:
+                    reward += 0.5  # Respected timing constraint
+        
+        # Penalty for NOT switching when temperature is out of bounds (switching too late)
+        if not switched:
+            if T < LL and action == 0:
+                # Temperature too cold but not heating
+                reward -= 2.0
+            elif T > UL and action == 1:
+                # Temperature too hot but still heating
+                reward -= 2.0
         
         # 3. ENERGY PENALTY (minor)
         if action == 1:
@@ -396,7 +398,7 @@ class Model(Fmi2FMU):
     
     def terminate(self) -> int:
         # Save to disk only if we didn't load from disk
-        if self.SAVE_TO_DISK and not (self.model_load_path and self.model_load_path.strip()):        
+        if self.SAVE_TO_DISK:# and not (self.model_load_path and self.model_load_path.strip()):        
             os.makedirs(self.SAVE_DIR, exist_ok=True)
             
             # Save the model state dict based on phase
