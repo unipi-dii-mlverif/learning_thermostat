@@ -3,10 +3,84 @@ import SlidingWindowStepModel
 from fmi2 import Fmi2FMU, Fmi2Status
 import torch
 from torch import nn
+import torch.nn.functional as F
 import statistics
 from SlidingWindowStepModel import *
 import random
 import os
+import numpy as np
+from collections import deque
+from typing import Optional, Dict, Tuple
+
+
+class SimpleRL:
+    """Simple policy gradient RL for fine-tuning with timing constraints."""
+    def __init__(self, policy: nn.Module, lr: float = 1e-5):
+        self.policy = policy
+        self.optimizer = torch.optim.Adam(policy.parameters(), lr=lr)
+        self.memory = deque(maxlen=100)  # Store recent experiences
+        self.gamma = 0.95  # Discount factor
+        self.batch_size = 20
+        
+    def add_experience(self, state, action, reward, log_prob):
+        """Store experience."""
+        self.memory.append((state, action, reward, log_prob))
+    
+    def compute_returns(self, rewards):
+        """Compute discounted returns."""
+        returns = []
+        R = 0
+        for r in reversed(rewards):
+            R = r + self.gamma * R
+            returns.insert(0, R)
+        returns = torch.tensor(returns, dtype=torch.float32)
+        # Normalize
+        if returns.std() > 1e-8:
+            returns = (returns - returns.mean()) / (returns.std() + 1e-8)
+        return returns
+    
+    def update(self) -> Optional[Dict[str, float]]:
+        """Policy gradient update."""
+        if len(self.memory) < self.batch_size:
+            return None
+        
+        # Get batch
+        batch = list(self.memory)[-self.batch_size:]
+        states = torch.stack([x[0] for x in batch])
+        actions = torch.tensor([x[1] for x in batch], dtype=torch.float32)
+        rewards = [x[2] for x in batch]
+        
+        # Compute returns
+        returns = self.compute_returns(rewards)
+        
+        # Recompute log probabilities for current policy
+        self.policy.train()
+        probs = self.policy(states).squeeze()
+        
+        # Log probability of taken action
+        log_probs = torch.where(
+            actions > 0.5,
+            torch.log(probs + 1e-8),
+            torch.log(1.0 - probs + 1e-8)
+        )
+        
+        # Policy gradient loss
+        loss = -(log_probs * returns).mean()
+        
+        # Update
+        self.optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 1.0)
+        self.optimizer.step()
+        
+        self.policy.eval()
+        
+        return {
+            "loss": float(loss.item()),
+            "avg_return": float(returns.mean().item()),
+            "avg_reward": float(np.mean(rewards))
+        }
+
 
 class Model(Fmi2FMU):
     def __init__(self, reference_to_attr=None) -> None:
@@ -33,6 +107,25 @@ class Model(Fmi2FMU):
         self.last_time = float("-inf")
         self.threshold = 0.002 #0.001 
         self.model_training = True
+        
+        # RL phase tracking
+        self.phase = "bc"  # "bc" -> "rl" -> "eval"
+        self.BC_PHASE_END = 3000.0
+        self.RL_PHASE_END = 9000.0
+        self.rl_agent: Optional[SimpleRL] = None
+        self.rl_update_count = 0
+        self.rl_update_every = 50  # Update every N steps
+        self.epsilon = 0.1  # Exploration rate for RL
+        self.epsilon_decay = 0.995
+        self.min_epsilon = 0.01
+        
+        # Previous state for RL
+        self.prev_state = None
+        self.prev_action = None
+        
+        # Metrics
+        self.total_switches = 0
+        self.total_violations = 0  # Timing constraint violations
         self.model = nn.Sequential(
             nn.Linear(5, 64),
             nn.LeakyReLU(),
@@ -51,6 +144,62 @@ class Model(Fmi2FMU):
         self.n_false = 0
 
         self.swsm = SWSM(self.model, 33)
+    
+    def compute_reward(self, time: float, action: int, state: torch.Tensor) -> float:
+        """Compute reward for RL considering comfort, timing, and energy."""
+        T = float(state[0].item())
+        LL = float(state[1].item())
+        UL = float(state[2].item())
+        time_since_comm = time - self.commutation_time
+        
+        reward = 0.0
+        
+        # 1. COMFORT REWARD: Stay within [LL, UL]
+        if LL <= T <= UL:
+            # Inside comfort zone - good!
+            distance_from_center = abs(T - self.T_desired)
+            comfort_width = (UL - LL) / 2.0
+            comfort_reward = 1.0 - 0.5 * (distance_from_center / comfort_width)
+            reward += comfort_reward
+        else:
+            # Outside comfort zone - bad!
+            if T < LL:
+                distance = LL - T
+            else:
+                distance = T - UL
+            reward -= 5.0 * distance  # Proportional penalty
+        
+        # 2. TIMING CONSTRAINT REWARD
+        # Check if action respects timing constraints
+        switched = (action != self.last_heater_status)
+        
+        if switched:
+            # Check if we're switching too soon
+            if action == 1:  # Turning on
+                min_time = self.C_in  # Should wait at least C_in after turning off
+                if time_since_comm < min_time:
+                    reward -= 3.0  # Violated cooling constraint
+                    self.total_violations += 1
+                else:
+                    reward += 0.3  # Respected timing
+            else:  # Turning off
+                min_time = self.H_in  # Should wait at least H_in after turning on
+                if time_since_comm < min_time:
+                    reward -= 3.0  # Violated heating constraint
+                    self.total_violations += 1
+                else:
+                    reward += 0.3  # Respected timing
+        
+        # 3. ENERGY PENALTY (minor)
+        if action == 1:
+            reward -= 0.05  # Small penalty for heating
+        
+        # 4. SWITCHING PENALTY (discourage too frequent switches)
+        if switched:
+            reward -= 0.2
+        
+        return float(np.clip(reward, -20.0, 2.0))
+    
     def exit_initialization_mode(self):
         """
         Decide se usare un modello pre-addestrato (offline RL)
@@ -104,74 +253,141 @@ class Model(Fmi2FMU):
         return Fmi2Status.ok
 
     def ctrl_step(self, time):
-        if time < self.last_time + 1: #or True:
+        if time < self.last_time + 1:
             return
         
         self.last_time = time
-
-        #if not self.has_learnt:
-        #    print(self.loss)
-
-        heater_status = self.heater_on_in if not self.has_learnt else self.heater_on_out
-        if self.last_heater_status != heater_status:
-            #print("commuto @ ", time)
-            self.commutation_time = time
-
-        # Poor men's balancing
-        if not self.has_learnt and self.n_false != 0 and not self.heater_on_in and ((self.n_false / (self.n_true + self.n_false) > .5) or (random.random() <= 0.1)):
-            #print("skipping", self.n_false, self.n_true)
+        
+        # === PHASE TRANSITIONS ===
+        if time >= self.RL_PHASE_END and self.phase == "rl":
+            print(f"[RL->EVAL] Switching to eval phase @ {time:.1f}s")
+            print(f"[RL STATS] Updates: {self.rl_update_count}, Switches: {self.total_switches}, Violations: {self.total_violations}")
+            self.phase = "eval"
+            self.model.eval()
+            self.has_learnt = True
+            # Save RL-tuned model
+            if self.SAVE_TO_DISK:
+                os.makedirs(self.SAVE_DIR, exist_ok=True)
+                rl_path = os.path.join(self.SAVE_DIR, "thermostat_nn_model_rl.pt")
+                torch.save(self.model.state_dict(), rl_path)
+                print(f"[RL] Saved RL-tuned model to {rl_path}")
             return
         
-        if self.heater_on_in:
-            self.n_true += 1
-        else:
-            self.n_false += 1
+        if time >= self.BC_PHASE_END and self.phase == "bc":
+            if self.loss <= self.threshold or time >= self.BC_PHASE_END + 100:
+                print(f"[BC->RL] Switching to RL phase @ {time:.1f}s (loss={self.loss:.4f})")
+                self.phase = "rl"
+                self.has_learnt = True
+                self.model_training = False
+                self.model.eval()
+                
+                # Initialize RL agent
+                self.rl_agent = SimpleRL(self.model, lr=1e-5)
+                print(f"[RL] Initialized RL agent with epsilon={self.epsilon:.3f}")
+                
+                # Save BC model
+                if self.SAVE_TO_DISK:
+                    os.makedirs(self.SAVE_DIR, exist_ok=True)
+                    bc_path = os.path.join(self.SAVE_DIR, "thermostat_nn_model_bc.pt")
+                    torch.save(self.model.state_dict(), bc_path)
+                    print(f"[BC] Saved BC model to {bc_path}")
         
-        input = torch.Tensor([
+        # Build state representation
+        state = torch.Tensor([
             self.T_bair_in,
-            self.T_desired-self.LL_in,
-            self.T_desired+self.UL_in,
-            #1 if self.H_in > 0 else -1,
+            self.T_desired - self.LL_in,
+            self.T_desired + self.UL_in,
             1 if time - self.commutation_time > self.C_in else -1,
             1 if time - self.commutation_time > self.H_in else -1
-            #self.T_bair_in,
-            #self.T_desired - self.LL_in,
-            #time - self.commutation_time - self.C_in,
-            #time - self.commutation_time - (self.C_in if heater_status else self.H_in) if heater_status and self.H_in > 0 else 0
-            #self.T_bair_in - (self.T_desired - self.LL_in),
-            #self.T_bair_in - (self.T_desired + self.UL_in)
         ])
-        target = torch.Tensor([1.0 if self.heater_on_in else 0.0]) #, 1.0 if not self.heater_on_in else 0.0])
-        #if self.heater_on_in:
-        #    print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", input, target)
-        out, loss2 = self.swsm.accumulate_and_step(input, self.model_training, target)
-        if loss2 is not None:
-            self.loss = loss2
         
-        #if loss2 is not None and abs(loss2 - self.loss) < 0.1:
-        #    self.n_false = 0
-        #    self.n_true = 0
+        # === BC PHASE (Supervised Learning) ===
+        if self.phase == "bc":
+            heater_status = self.heater_on_in
+            if self.last_heater_status != heater_status:
+                self.commutation_time = time
+            
+            # Poor men's balancing
+            if self.n_false != 0 and not self.heater_on_in and ((self.n_false / (self.n_true + self.n_false) > .5) or (random.random() <= 0.1)):
+                return
+            
+            if self.heater_on_in:
+                self.n_true += 1
+            else:
+                self.n_false += 1
+            
+            target = torch.Tensor([1.0 if self.heater_on_in else 0.0])
+            out, loss2 = self.swsm.accumulate_and_step(state, self.model_training, target)
+            if loss2 is not None:
+                self.loss = loss2.item() if hasattr(loss2, 'item') else loss2
+            
+            if out is None:
+                self.heater_on_out = True
+            else:
+                self.heater_on_out = out[0] >= 0.5
+            
+            self.last_heater_status = self.heater_on_out
+            return
         
-        # Start outputing heating command when the model is trained and swapped
-        if out is None:
-            self.heater_on_out = True
-        else:
-            #print(input, out)
-            #print(prob_on[0].item())
-            self.heater_on_out = out[0] >= 0.5 #out[0].item() >= out[1].item()
-
-
-        if self.has_learnt and self.loss is None:
-            self.loss = torch.Tensor([-self.threshold])
-
-        if self.loss is not None and not isinstance(self.loss, float):
-            self.loss = self.loss.item()
-
-        # TODO do something better
-        if ((time >= 3000 and self.loss <= self.threshold) or time >= 9000) and not self.has_learnt:
-            print("=========================> DONE @ ", time)
-            self.has_learnt = True
-            self.model_training = False
+        # === RL PHASE (Policy Gradient Fine-tuning) ===
+        if self.phase == "rl":
+            # Epsilon-greedy action selection
+            if random.random() < self.epsilon:
+                action = random.randint(0, 1)
+            else:
+                with torch.no_grad():
+                    prob = float(self.model(state.unsqueeze(0)).item())
+                action = 1 if prob >= 0.5 else 0
+            
+            # Compute reward for previous step if we have one
+            if self.prev_state is not None and self.prev_action is not None and self.rl_agent is not None:
+                reward = self.compute_reward(time - 1, self.prev_action, self.prev_state)
+                # Compute log prob for storage (not used in current simple implementation but kept for completeness)
+                with torch.no_grad():
+                    prob = float(self.model(self.prev_state.unsqueeze(0)).item())
+                    log_prob = np.log(prob + 1e-8) if self.prev_action == 1 else np.log(1 - prob + 1e-8)
+                
+                self.rl_agent.add_experience(self.prev_state, self.prev_action, reward, log_prob)
+            
+            # Update policy periodically
+            if int(time) % self.rl_update_every == 0 and self.rl_agent is not None:
+                stats = self.rl_agent.update()
+                if stats:
+                    self.rl_update_count += 1
+                    if self.rl_update_count % 10 == 0:
+                        print(f"[RL @ {time:.1f}s] loss={stats['loss']:.3f}, "
+                              f"avg_ret={stats['avg_return']:.2f}, avg_rew={stats['avg_reward']:.2f}, "
+                              f"eps={self.epsilon:.3f}, T={self.T_bair_in:.1f}°C")
+            
+            # Decay exploration
+            self.epsilon = max(self.min_epsilon, self.epsilon * self.epsilon_decay)
+            
+            # Execute action
+            self.heater_on_out = bool(action)
+            
+            # Track switches
+            if self.heater_on_out != self.last_heater_status:
+                self.total_switches += 1
+                self.commutation_time = time
+            
+            # Store for next step
+            self.prev_state = state
+            self.prev_action = action
+            self.last_heater_status = self.heater_on_out
+            return
+        
+        # === EVAL PHASE (Pure Inference) ===
+        if self.phase == "eval":
+            with torch.no_grad():
+                prob = float(self.model(state.unsqueeze(0)).item())
+            action = 1 if prob >= 0.5 else 0
+            self.heater_on_out = bool(action)
+            
+            if self.heater_on_out != self.last_heater_status:
+                self.commutation_time = time
+            
+            self.last_heater_status = self.heater_on_out
+            return
 
     def do_step(self, current_time, step_size, no_step_prior):
         self.ctrl_step(current_time)
@@ -183,9 +399,14 @@ class Model(Fmi2FMU):
         if self.SAVE_TO_DISK and not (self.model_load_path and self.model_load_path.strip()):        
             os.makedirs(self.SAVE_DIR, exist_ok=True)
             
-            # Save the model state dict
-            model_path = os.path.join(self.SAVE_DIR, "thermostat_nn_model.pt")
-            print(f"Saving to {model_path}...")
+            # Save the model state dict based on phase
+            if self.phase == "rl" or self.phase == "eval":
+                model_path = os.path.join(self.SAVE_DIR, "thermostat_nn_model_rl.pt")
+                print(f"[RL/EVAL] Saving RL-tuned model to {model_path}...")
+            else:
+                model_path = os.path.join(self.SAVE_DIR, "thermostat_nn_model.pt")
+                print(f"[BC] Saving BC model to {model_path}...")
+            
             torch.save(self.model.state_dict(), model_path)
             print(f"Model saved to {model_path}")
             
@@ -193,5 +414,13 @@ class Model(Fmi2FMU):
             full_model_path = os.path.join(self.SAVE_DIR, "thermostat_nn_full_model.pt")
             torch.save(self.model, full_model_path)
             print(f"Full model saved to {full_model_path}")
+            
+            # Print summary
+            print(f"\n[TRAINING SUMMARY]")
+            print(f"  Final phase: {self.phase}")
+            print(f"  Total switches: {self.total_switches}")
+            if self.phase in ["rl", "eval"]:
+                print(f"  RL updates: {self.rl_update_count}")
+                print(f"  Timing violations: {self.total_violations}")
             
         return Fmi2Status.ok
