@@ -8,6 +8,7 @@ import statistics
 from SlidingWindowStepModel import *
 import random
 import os
+import math
 import numpy as np
 from collections import deque
 from typing import Optional, Dict, Tuple
@@ -108,6 +109,11 @@ class Model(Fmi2FMU):
         self.threshold = 0.002 #0.001 
         self.model_training = True
         
+        # Temperature derivative tracking
+        self.prev_T = None
+        self.prev_T_time = None
+        self.T_derivative = 0.0
+        
         # RL phase tracking
         self.phase = "bc"  # "bc" -> "rl" -> "eval"
         self.BC_PHASE_END = 3_000.0
@@ -115,7 +121,7 @@ class Model(Fmi2FMU):
         self.rl_agent: Optional[SimpleRL] = None
         self.rl_update_count = 0
         self.rl_update_every = 50  # Update every N steps
-        self.epsilon = 0.1  # Exploration rate for RL
+        self.epsilon = 0.25  # Exploration rate for RL
         self.epsilon_decay = 0.995
         self.min_epsilon = 0.01
         
@@ -123,11 +129,16 @@ class Model(Fmi2FMU):
         self.prev_state = None
         self.prev_action = None
         
+        # Epsilon-greedy action persistence
+        self.epsilon_action = None  # Store the epsilon-greedy action
+        self.epsilon_action_time = float("-inf")  # When the epsilon action was taken
+        self.epsilon_action_duration = 10.0  # Keep epsilon action for 8 seconds
+        
         # Metrics
         self.total_switches = 0
         self.total_violations = 0  # Timing constraint violations
         self.model = nn.Sequential(
-            nn.Linear(5, 64),
+            nn.Linear(6, 64),
             nn.LeakyReLU(),
             nn.Linear(64, 128),
             nn.ReLU(),
@@ -146,61 +157,104 @@ class Model(Fmi2FMU):
         self.swsm = SWSM(self.model, 33)
     
     def compute_reward(self, time: float, action: int, state: torch.Tensor) -> float:
-        """Compute reward for RL considering comfort, timing, and energy."""
+        """Compute reward for RL with strong overshoot prevention and anticipatory behavior."""
         T = float(state[0].item())
         LL = float(state[1].item())
         UL = float(state[2].item())
+        dT_dt = float(state[5].item())  # Temperature derivative
         time_since_comm = time - self.commutation_time
         
         reward = 0.0
         
-        # 1. COMFORT REWARD: Stay within [LL, UL]
+        # 1. COMFORT REWARD/PENALTY: Stay within [LL, UL] with ASYMMETRIC penalties
         if LL <= T <= UL:
+            # Gaussian-like reward peaking at center of comfort zone
+            center = (LL + UL) / 2.0
+            width = (UL - LL) / 2.0
+            # Gaussian: exp(-((T - center)^2) / (2 * sigma^2))
+            # We want peak of 0.5, so we scale by 0.5
+            # sigma = width/2 gives reasonable spread
+            sigma = width / 2.0
+            reward += 0.5 * math.exp(-((T - center) ** 2) / (2 * sigma ** 2))
             # Inside comfort zone - good!
-            distance_from_center = abs(T - self.T_desired)
-            comfort_width = (UL - LL) / 2.0
-            comfort_reward = 1.0 - 0.5 * (distance_from_center / comfort_width)
-            reward += comfort_reward
-        else:
-            # Outside comfort zone - bad!
-            if T < LL:
-                distance = LL - T
-            else:
-                distance = T - UL
-            reward -= 5.0 * distance  # Proportional penalty
+            #if T > self.T_desired:
+            #    reward -= 1.0 - 1.0*(UL - T)/self.UL_in
+            #else:
+            #    reward += 0.5*(T - LL)/self.LL_in
+        #else:
+        #    # Outside comfort zone - STRONG penalties, especially for overshooting UL
+        #    if T < LL:
+        #        distance = LL - T
+        #        reward -= 8.0 * distance  # Moderate penalty for undershoot
+        #    else:
+        #        distance = T - UL
+        #        # MUCH STRONGER penalty for exceeding upper limit (overshoot is worse)
+        #        reward -= 20.0 * distance  # Very strong penalty
+        #        # Extra penalty if still rising
+        #        if dT_dt > 0:
+        #            reward -= 10.0 * dT_dt
         
-        # 2. TIMING CONSTRAINT REWARD
+        # 2. PREDICTIVE/ANTICIPATORY REWARDS: Encourage turning off heater BEFORE overshooting
+        # Predict temperature in next 30-60 seconds based on current derivative
+        prediction_horizon = 45.0  # seconds
+        predicted_T = T + dT_dt * prediction_horizon
+        
+        #if action == 1:  # Currently heating
+        #    # If predicted temperature will exceed UL, strongly discourage continuing to heat
+        #    if predicted_T > UL:
+        #        margin = predicted_T - UL
+        #        reward -= 5.0 * margin
+        #    # If temperature is close to UL and rising, discourage heating
+        #    elif T > UL - 1.5 and dT_dt > 0.02:
+        #        reward -= 4.0
+        #else:  # Currently not heating (action == 0)
+        #    # Reward for staying off when temperature would overshoot
+        #    if T > UL - 2.0 and dT_dt > 0:
+        #        reward += 1.0
+        #    # If predicted temperature will drop below LL, discourage staying off
+        #    if predicted_T < LL:
+        #        margin = LL - predicted_T
+        #        reward -= 2.0 * margin
+        
+        # 3. DERIVATIVE-BASED PENALTIES: Penalize dangerous trends
+        if T > UL and dT_dt > 0.01:  # Above limit and still rising - very bad!
+            reward -= 100.0 * dT_dt
+        elif T > 0.965*UL and dT_dt > 0.025:  # Rising too fast toward upper bound
+            reward -= 70 * dT_dt
+        
+        # 4. TIMING CONSTRAINT REWARD
         # Only reward respecting timing, no penalty for switching too early
         switched = (action != self.last_heater_status)
         
-        if switched:
-            if action == 1:  # Turning on
-                min_time = self.C_in  # Should wait at least C_in after turning off
-                if time_since_comm >= min_time:
-                    reward += 0.5  # Respected timing constraint
-            else:  # Turning off
-                min_time = self.H_in  # Should wait at least H_in after turning on
-                if time_since_comm >= min_time:
-                    reward += 0.5  # Respected timing constraint
+        #if switched:
+        #    if action == 1:  # Turning on
+        #        min_time = self.C_in  # Should wait at least C_in after turning off
+        #        if time_since_comm >= min_time:
+        #            reward += 0.5  # Respected timing constraint
+        #    else:  # Turning off
+        #        min_time = self.H_in  # Should wait at least H_in after turning on
+        #        if time_since_comm >= min_time:
+        #            reward += 0.5  # Respected timing constraint
+        #
+        ## Penalty for NOT switching when temperature is out of bounds (switching too late)
+        #if not switched:
+        #    if T < LL and action == 0:
+        #        # Temperature too cold but not heating
+        #        reward -= 2.0
+        #    elif T > UL and action == 1:
+        #        # Temperature too hot but still heating
+        #        reward -= 2.0
+        #
+        ## 3. ENERGY PENALTY (minor)
+        #if action == 1:
+        #    reward -= 0.05  # Small penalty for heating
+        #
+        ## 4. SWITCHING PENALTY (discourage too frequent switches)
+        #if switched:
+        #    reward -= 0.2
         
-        # Penalty for NOT switching when temperature is out of bounds (switching too late)
-        if not switched:
-            if T < LL and action == 0:
-                # Temperature too cold but not heating
-                reward -= 2.0
-            elif T > UL and action == 1:
-                # Temperature too hot but still heating
-                reward -= 2.0
-        
-        # 3. ENERGY PENALTY (minor)
-        if action == 1:
-            reward -= 0.05  # Small penalty for heating
-        
-        # 4. SWITCHING PENALTY (discourage too frequent switches)
-        if switched:
-            reward -= 0.2
-        
-        return float(np.clip(reward, -20.0, 2.0))
+        #return float(np.clip(reward, -20.0, 2.0))
+        return reward
     
     def exit_initialization_mode(self):
         """
@@ -294,13 +348,23 @@ class Model(Fmi2FMU):
                     torch.save(self.model.state_dict(), bc_path)
                     print(f"[BC] Saved BC model to {bc_path}")
         
+        # Calculate temperature derivative
+        if self.prev_T is not None and self.prev_T_time is not None:
+            dt = time - self.prev_T_time
+            if dt > 0:
+                self.T_derivative = (self.T_bair_in - self.prev_T) / dt
+        
+        self.prev_T = self.T_bair_in
+        self.prev_T_time = time
+        
         # Build state representation
         state = torch.Tensor([
             self.T_bair_in,
             self.T_desired - self.LL_in,
             self.T_desired + self.UL_in,
-            1 if time - self.commutation_time > self.C_in else -1,
-            1 if time - self.commutation_time > self.H_in else -1
+            math.tanh((time - self.commutation_time - self.C_in) / 2.0),
+            math.tanh((time - self.commutation_time - self.H_in) / 2.0),
+            self.T_derivative
         ])
         
         # === BC PHASE (Supervised Learning) ===
@@ -333,13 +397,24 @@ class Model(Fmi2FMU):
         
         # === RL PHASE (Policy Gradient Fine-tuning) ===
         if self.phase == "rl":
-            # Epsilon-greedy action selection
-            if random.random() < self.epsilon:
+            # Epsilon-greedy action selection with persistence
+            time_since_epsilon = time - self.epsilon_action_time
+            
+            if self.epsilon_action is not None and time_since_epsilon < self.epsilon_action_duration:
+                # Use stored epsilon-greedy action (keep for 8 seconds)
+                action = self.epsilon_action
+            elif random.random() < self.epsilon:
+                # New epsilon-greedy exploration
                 action = random.randint(0, 1)
+                self.epsilon_action = action
+                self.epsilon_action_time = time
             else:
+                # Policy-based action (greedy)
                 with torch.no_grad():
                     prob = float(self.model(state.unsqueeze(0)).item())
                 action = 1 if prob >= 0.5 else 0
+                # Reset epsilon action tracking
+                self.epsilon_action = None
             
             # Compute reward for previous step if we have one
             if self.prev_state is not None and self.prev_action is not None and self.rl_agent is not None:
