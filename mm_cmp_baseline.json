@@ -43,7 +43,9 @@
   },
   "parameters": {
     "{Plant}.PlantInstance.delay": -1,
-    "{KalmanFilter}.KalmanFilterInstance.STEP_SIZE": 2
+    "{KalmanFilter}.KalmanFilterInstance.STEP_SIZE": 2,
+    "{Supervisor}.SupervisorInstance.LL_init": 5.0,
+    "{Supervisor}.SupervisorInstance.UL_init": 0.0
   },
   "algorithm": {
     "type": "fixed-step",
