@@ -66,6 +66,10 @@
     <ScalarVariable name="USE_OFFLINE_RL" valueReference="13" variability="fixed" causality="parameter">
       <Boolean start="false"/>
     </ScalarVariable>
+    <!--Index of variable = "15"-->
+    <ScalarVariable name="START_IN_EVAL_MODE" valueReference="14" variability="fixed" causality="parameter">
+      <Boolean start="false"/>
+    </ScalarVariable>
   </ModelVariables>
   <ModelStructure>
     <Outputs>

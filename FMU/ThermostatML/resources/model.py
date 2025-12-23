@@ -102,6 +102,7 @@ class Model(Fmi2FMU):
         self.SAVE_TO_DISK = True
         self.SAVE_DIR = "/var/tmp/learning_thermostat"
         self.USE_OFFLINE_RL = False
+        self.START_IN_EVAL_MODE = False
         
         self.last_heater_status = False
         self.commutation_time = 0
@@ -167,10 +168,10 @@ class Model(Fmi2FMU):
         reward = 0.0
         
         # 1. COMFORT REWARD/PENALTY: Stay within [LL, UL] with ASYMMETRIC penalties
-        if LL <= T <= UL:
+        if 1.1*LL <= T <= 0.9*UL:
             # Gaussian-like reward peaking at center of comfort zone
             center = (LL + UL) / 2.0
-            width = (UL - LL) / 2.0
+            width = (1.1*UL - 0.9*LL) / 2.0
             # Gaussian: exp(-((T - center)^2) / (2 * sigma^2))
             # We want peak of 0.5, so we scale by 0.5
             # sigma = width/2 gives reasonable spread
@@ -219,8 +220,8 @@ class Model(Fmi2FMU):
         # 3. DERIVATIVE-BASED PENALTIES: Penalize dangerous trends
         if T > UL and dT_dt > 0.01:  # Above limit and still rising - very bad!
             reward -= 100.0 * dT_dt
-        elif T > 0.965*UL and dT_dt > 0.025:  # Rising too fast toward upper bound
-            reward -= 70 * dT_dt
+        elif T > 0.961*UL and dT_dt > 0.02:  # Rising too fast toward upper bound
+            reward -= 72 * dT_dt
         
         # 4. TIMING CONSTRAINT REWARD
         # Only reward respecting timing, no penalty for switching too early
@@ -261,6 +262,28 @@ class Model(Fmi2FMU):
         Decide se usare un modello pre-addestrato (offline RL)
         o il training online SlidingWindow come nel progetto originale.
         """
+        
+        # Skip directly to eval mode if requested
+        if self.START_IN_EVAL_MODE:
+            print("[Model] START_IN_EVAL_MODE=True, skipping to eval phase")
+            self.phase = "eval"
+            self.has_learnt = True
+            self.model_training = False
+            self.model.eval()
+            
+            # Try to load model if path provided
+            if self.model_load_path and self.model_load_path.strip():
+                try:
+                    print(f"[Model] Loading model from {self.model_load_path}...")
+                    state_dict = torch.load(self.model_load_path, map_location="cpu")
+                    self.model.load_state_dict(state_dict)
+                    print(f"[Model] Model loaded successfully")
+                except Exception as e:
+                    print(f"[Model] Warning: Could not load model: {e}")
+            else:
+                print("[Model] Warning: No model_load_path provided, using untrained model")
+            
+            return Fmi2Status.ok
 
         if self.USE_OFFLINE_RL:
             # === Modalità OFFLINE RL / BC+RL ===
@@ -292,15 +315,15 @@ class Model(Fmi2FMU):
             # === Modalità ORIGINALE: solo SlidingWindow online ===
             # Qui manteniamo il comportamento "vecchio":
             # carica un modello solo se model_load_path è stato esplicitamente settato
-            if self.model_load_path and self.model_load_path.strip():
+            if True: #self.model_load_path and self.model_load_path.strip():
                 try:
                     print(f"[Model] Loading model from {self.model_load_path}...")
                     state_dict = torch.load(self.model_load_path, map_location="cpu")
                     self.model.load_state_dict(state_dict)
-                    self.model.eval()
-                    self.has_learnt = True
-                    self.model_training = False
-                    self.loss = 0.0
+                    #self.model.eval()
+                    #self.has_learnt = True
+                    #self.model_training = False
+                    #self.loss = 0.0
                     print(f"[Model] Model loaded successfully from {self.model_load_path}")
                 except Exception as e:
                     print(f"[Model] Error loading model from {self.model_load_path}: {e}")
@@ -486,6 +509,12 @@ class Model(Fmi2FMU):
             
             torch.save(self.model.state_dict(), model_path)
             print(f"Model saved to {model_path}")
+            
+            # Also save as default name for future loading
+            default_path = os.path.join(self.SAVE_DIR, "thermostat_nn_model.pt")
+            #if model_path != default_path:
+            torch.save(self.model.state_dict(), default_path)
+            print(f"Model also saved to {default_path} (default load path)")
             
             # Also save the entire model
             full_model_path = os.path.join(self.SAVE_DIR, "thermostat_nn_full_model.pt")
