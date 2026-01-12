@@ -226,7 +226,14 @@ class Model(Fmi2FMU):
         # 4. TIMING CONSTRAINT REWARD
         # Only reward respecting timing, no penalty for switching too early
         switched = (action != self.last_heater_status)
+
+        if time_since_comm > self.H_in and self.prev_action == 1:
+            reward -= 0.33*time_since_comm + 0.33
         
+        if time_since_comm > self.C_in and self.prev_action == 0:
+            reward += 1 - 0.33*math.exp(0.5*(self.C_in - time_since_comm))
+
+
         #if switched:
         #    if action == 1:  # Turning on
         #        min_time = self.C_in  # Should wait at least C_in after turning off

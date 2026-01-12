@@ -129,6 +129,8 @@ def main():
     
     print(f"Plots saved to {args.output_dir}/")
 
+    ##### PART 2 MIN/MAX/AVG HEATING TIME #############
+
 
 if __name__ == "__main__":
     main()
