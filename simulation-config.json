@@ -25,7 +25,8 @@
       "heater_on_out",
       "loss",
       "has_learnt",
-      "T_bair_in"
+      "T_bair_in",
+      "reward"
     ]
   }
 }

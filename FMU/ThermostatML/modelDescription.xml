@@ -70,12 +70,17 @@
     <ScalarVariable name="START_IN_EVAL_MODE" valueReference="14" variability="fixed" causality="parameter">
       <Boolean start="false"/>
     </ScalarVariable>
+    <!--Index of variable = "16"-->
+    <ScalarVariable name="reward" valueReference="15" variability="continuous" causality="output" initial="exact">
+      <Real start="0.0"/>
+    </ScalarVariable>
   </ModelVariables>
   <ModelStructure>
     <Outputs>
       <Unknown index="7" dependencies="" />
       <Unknown index="8" dependencies="" />
       <Unknown index="9" dependencies="" />
+      <Unknown index="16" dependencies="" />
     </Outputs>
   </ModelStructure>
 </fmiModelDescription>

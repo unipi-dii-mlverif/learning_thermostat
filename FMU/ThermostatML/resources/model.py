@@ -97,6 +97,7 @@ class Model(Fmi2FMU):
         self.heater_on_out = False # output
         self.has_learnt = False
         self.loss = 201.0
+        self.reward = 0.0
         self.model_load_path = ""
         self.T_desired = 25.5
         self.SAVE_TO_DISK = True
@@ -399,6 +400,7 @@ class Model(Fmi2FMU):
         
         # === BC PHASE (Supervised Learning) ===
         if self.phase == "bc":
+            self.reward = 0.0
             heater_status = self.heater_on_in
             if self.last_heater_status != heater_status:
                 self.commutation_time = time
@@ -449,6 +451,7 @@ class Model(Fmi2FMU):
             # Compute reward for previous step if we have one
             if self.prev_state is not None and self.prev_action is not None and self.rl_agent is not None:
                 reward = self.compute_reward(time - 1, self.prev_action, self.prev_state)
+                self.reward = reward  # Store for output
                 # Compute log prob for storage (not used in current simple implementation but kept for completeness)
                 with torch.no_grad():
                     prob = float(self.model(self.prev_state.unsqueeze(0)).item())
@@ -485,6 +488,7 @@ class Model(Fmi2FMU):
         
         # === EVAL PHASE (Pure Inference) ===
         if self.phase == "eval":
+            self.reward = 0.0
             with torch.no_grad():
                 prob = float(self.model(state.unsqueeze(0)).item())
             action = 1 if prob >= 0.5 else 0

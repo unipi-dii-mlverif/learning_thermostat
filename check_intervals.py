@@ -132,15 +132,21 @@ def main():
         print(f"Error reading CSV file: {e}", file=sys.stderr)
         sys.exit(1)
     
-    # Check if required column exists
+    # Check if required column exists (try heater_on_out first, then ml_heater)
     heater_column = '{ThermostatML}.ThermostatMLInstance.heater_on_out'
-    if heater_column not in df.columns:
-        print(f"Error: Column '{heater_column}' not found in CSV", file=sys.stderr)
+    ml_heater_column = 'ml_heater'
+    
+    if heater_column in df.columns:
+        column_to_use = heater_column
+    elif ml_heater_column in df.columns:
+        column_to_use = ml_heater_column
+    else:
+        print(f"Error: Neither '{heater_column}' nor '{ml_heater_column}' found in CSV", file=sys.stderr)
         print(f"Available columns: {list(df.columns)}", file=sys.stderr)
         sys.exit(1)
     
     # Find intervals
-    heating_intervals, cooling_intervals = find_intervals(df, heater_column, args.T)
+    heating_intervals, cooling_intervals = find_intervals(df, column_to_use, args.T)
     
     print(f"Analysis starting from time T = {args.T}")
     print(f"Maximum heating interval (H) = {args.H}")

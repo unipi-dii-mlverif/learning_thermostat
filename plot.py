@@ -127,6 +127,14 @@ def main():
         args.eval_time
     )
     
+    plot_columns(
+        df,
+        ["{ThermostatML}.ThermostatMLInstance.reward"],
+        os.path.join(args.output_dir, "g_reward.pdf"),
+        time_learnt,
+        args.eval_time
+    )
+    
     print(f"Plots saved to {args.output_dir}/")
 
     ##### PART 2 MIN/MAX/AVG HEATING TIME #############
