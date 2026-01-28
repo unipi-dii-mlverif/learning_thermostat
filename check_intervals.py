@@ -144,6 +144,8 @@ def main():
         print(f"Error: Neither '{heater_column}' nor '{ml_heater_column}' found in CSV", file=sys.stderr)
         print(f"Available columns: {list(df.columns)}", file=sys.stderr)
         sys.exit(1)
+
+    print(f"Using column: {column_to_use}")
     
     # Find intervals
     heating_intervals, cooling_intervals = find_intervals(df, column_to_use, args.T)
