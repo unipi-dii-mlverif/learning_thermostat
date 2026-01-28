@@ -23,3 +23,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+paper
+build2
+RL_IMPLEMENTATION_REPORT.md
+readme.pdf
+
