@@ -108,7 +108,7 @@ class Model(Fmi2FMU):
         self.last_heater_status = False
         self.commutation_time = 0
         self.last_time = float("-inf")
-        self.threshold = 0.002 #0.001 
+        self.threshold = 0.001 #0.001 
         self.model_training = True
         
         # Temperature derivative tracking
@@ -123,7 +123,7 @@ class Model(Fmi2FMU):
         self.rl_agent: Optional[SimpleRL] = None
         self.rl_update_count = 0
         self.rl_update_every = 50  # Update every N steps
-        self.epsilon = 0.25  # Exploration rate for RL
+        self.epsilon = 0.2  # Exploration rate for RL
         self.epsilon_decay = 0.995
         self.min_epsilon = 0.01
         
@@ -169,54 +169,15 @@ class Model(Fmi2FMU):
         reward = 0.0
         
         # 1. COMFORT REWARD/PENALTY: Stay within [LL, UL] with ASYMMETRIC penalties
-        if 1.1*LL <= T <= 0.9*UL:
+        if 1.1*LL <= T <= 0.98*UL:
             # Gaussian-like reward peaking at center of comfort zone
-            center = (LL + UL) / 2.0
-            width = (1.1*UL - 0.9*LL) / 2.0
+            center = (1.1*LL + 0.98*UL) / 2.0
+            width = abs(1.1*LL - 0.98*UL) / 2.0
             # Gaussian: exp(-((T - center)^2) / (2 * sigma^2))
             # We want peak of 0.5, so we scale by 0.5
             # sigma = width/2 gives reasonable spread
             sigma = width / 2.0
-            reward += 0.5 * math.exp(-((T - center) ** 2) / (2 * sigma ** 2))
-            # Inside comfort zone - good!
-            #if T > self.T_desired:
-            #    reward -= 1.0 - 1.0*(UL - T)/self.UL_in
-            #else:
-            #    reward += 0.5*(T - LL)/self.LL_in
-        #else:
-        #    # Outside comfort zone - STRONG penalties, especially for overshooting UL
-        #    if T < LL:
-        #        distance = LL - T
-        #        reward -= 8.0 * distance  # Moderate penalty for undershoot
-        #    else:
-        #        distance = T - UL
-        #        # MUCH STRONGER penalty for exceeding upper limit (overshoot is worse)
-        #        reward -= 20.0 * distance  # Very strong penalty
-        #        # Extra penalty if still rising
-        #        if dT_dt > 0:
-        #            reward -= 10.0 * dT_dt
-        
-        # 2. PREDICTIVE/ANTICIPATORY REWARDS: Encourage turning off heater BEFORE overshooting
-        # Predict temperature in next 30-60 seconds based on current derivative
-        prediction_horizon = 45.0  # seconds
-        predicted_T = T + dT_dt * prediction_horizon
-        
-        #if action == 1:  # Currently heating
-        #    # If predicted temperature will exceed UL, strongly discourage continuing to heat
-        #    if predicted_T > UL:
-        #        margin = predicted_T - UL
-        #        reward -= 5.0 * margin
-        #    # If temperature is close to UL and rising, discourage heating
-        #    elif T > UL - 1.5 and dT_dt > 0.02:
-        #        reward -= 4.0
-        #else:  # Currently not heating (action == 0)
-        #    # Reward for staying off when temperature would overshoot
-        #    if T > UL - 2.0 and dT_dt > 0:
-        #        reward += 1.0
-        #    # If predicted temperature will drop below LL, discourage staying off
-        #    if predicted_T < LL:
-        #        margin = LL - predicted_T
-        #        reward -= 2.0 * margin
+            reward += 9 * math.exp(-((T - center) ** 2) / (2 * sigma ** 2))
         
         # 3. DERIVATIVE-BASED PENALTIES: Penalize dangerous trends
         if T > UL and dT_dt > 0.01:  # Above limit and still rising - very bad!
@@ -224,45 +185,21 @@ class Model(Fmi2FMU):
         elif T > 0.961*UL and dT_dt > 0.02:  # Rising too fast toward upper bound
             reward -= 72 * dT_dt
         
-        # 4. TIMING CONSTRAINT REWARD
-        # Only reward respecting timing, no penalty for switching too early
-        switched = (action != self.last_heater_status)
 
+        # Heating constraint: penalize staying ON beyond H_in
         if time_since_comm > self.H_in and self.prev_action == 1:
-            reward -= 0.33*time_since_comm + 0.33
+            reward -= 0.15 * (time_since_comm - self.H_in) + 0.15 
         
-        if time_since_comm > self.C_in and self.prev_action == 0:
-            reward += 1 - 0.33*math.exp(0.5*(self.C_in - time_since_comm))
-
-
-        #if switched:
-        #    if action == 1:  # Turning on
-        #        min_time = self.C_in  # Should wait at least C_in after turning off
-        #        if time_since_comm >= min_time:
-        #            reward += 0.5  # Respected timing constraint
-        #    else:  # Turning off
-        #        min_time = self.H_in  # Should wait at least H_in after turning on
-        #        if time_since_comm >= min_time:
-        #            reward += 0.5  # Respected timing constraint
-        #
-        ## Penalty for NOT switching when temperature is out of bounds (switching too late)
-        #if not switched:
-        #    if T < LL and action == 0:
-        #        # Temperature too cold but not heating
-        #        reward -= 2.0
-        #    elif T > UL and action == 1:
-        #        # Temperature too hot but still heating
-        #        reward -= 2.0
-        #
-        ## 3. ENERGY PENALTY (minor)
-        #if action == 1:
-        #    reward -= 0.05  # Small penalty for heating
-        #
-        ## 4. SWITCHING PENALTY (discourage too frequent switches)
-        #if switched:
-        #    reward -= 0.2
+        # Cooling constraint: reward staying OFF long enough, penalize turning ON too early
+        if self.prev_action == 0:
+            if time_since_comm >= self.C_in:
+                # Good: cooling constraint satisfied
+                reward += 1 - 0.15*math.exp(0.4 * (self.C_in - time_since_comm))
+            else:
+                # Bad: cooling interval too short - penalize proportionally to how early
+                shortfall = self.C_in - time_since_comm
+                reward -= 0.07 * shortfall  # Penalty grows with how much time is missing
         
-        #return float(np.clip(reward, -20.0, 2.0))
         return reward
     
     def exit_initialization_mode(self):
