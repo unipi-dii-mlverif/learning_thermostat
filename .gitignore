@@ -27,4 +27,5 @@ paper
 build2
 RL_IMPLEMENTATION_REPORT.md
 readme.pdf
-
+*.7z
+latex
