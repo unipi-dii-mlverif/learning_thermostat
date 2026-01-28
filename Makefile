@@ -3,7 +3,7 @@ _dummy := $(shell mkdir -p build/cmp)
 #ZIP_UTIL=zip -r
 ZIP_UTIL=7z a -tzip -mx=1
 
-MAESTRO_JAR ?= ~/Scaricati/maestro-4.0.0-jar-with-dependencies.jar
+MAESTRO_JAR ?= ~/Scaricati/maestro-4.0.2-jar-with-dependencies.jar
 MAESTRO ?= java -classpath $(MAESTRO_JAR):/work/model/classpath org.intocps.maestro.Main
 LIVE_LOSS ?= y # Requires Gnuplot
 
