@@ -122,6 +122,61 @@ def check_constraint_violations(on_periods, off_periods, H=30.0, C=20.0):
     }
 
 
+def compute_time_above_ul(temp_series, time_series, ul_value):
+    """
+    Compute total time spent above the UL temperature limit.
+    
+    Args:
+        temp_series: Temperature values
+        time_series: Corresponding time values
+        ul_value: Upper limit temperature threshold
+    
+    Returns:
+        Dictionary with time above UL statistics
+    """
+    if len(temp_series) == 0 or len(time_series) == 0:
+        return {
+            'time_above_ul': 0.0,
+            'time_above_ul_pct': 0.0,
+            'max_continuous_time_above_ul': 0.0
+        }
+    
+    # Calculate time intervals (assuming uniform sampling)
+    time_diffs = np.diff(time_series)
+    if len(time_diffs) == 0:
+        dt = 1.0  # default
+    else:
+        dt = np.median(time_diffs)  # Use median for robustness
+    
+    # Find where temperature exceeds UL
+    above_ul = temp_series > ul_value
+    
+    # Total time above UL (sum of intervals where temp > UL)
+    time_above = float(np.sum(above_ul[:-1] * time_diffs))  # Use time_diffs
+    
+    # Total simulation time
+    total_time = float(time_series.iloc[-1] - time_series.iloc[0])
+    
+    # Percentage of time above UL
+    time_above_pct = (time_above / total_time * 100) if total_time > 0 else 0.0
+    
+    # Maximum continuous time above UL
+    max_continuous = 0.0
+    current_continuous = 0.0
+    for i in range(len(above_ul) - 1):
+        if above_ul.iloc[i]:
+            current_continuous += time_diffs[i]
+            max_continuous = max(max_continuous, current_continuous)
+        else:
+            current_continuous = 0.0
+    
+    return {
+        'time_above_ul': time_above,
+        'time_above_ul_pct': time_above_pct,
+        'max_continuous_time_above_ul': float(max_continuous)
+    }
+
+
 def analyze_trace(csv_path, H=30.0, C=20.0):
     """Analyze a single simulation trace"""
     df = pd.read_csv(csv_path)
@@ -174,6 +229,26 @@ def analyze_trace(csv_path, H=30.0, C=20.0):
             print(f"Warning: {heater_on_col} not found in {csv_path}")
         if 'time' not in df.columns:
             print(f"Warning: 'time' column not found in {csv_path}")
+    
+    # Compute time above UL
+    ul_col = '{Supervisor}.SupervisorInstance.UL_out'
+    if t_bair_col in df.columns and ul_col in df.columns and 'time' in df.columns:
+        # Get the UL value (assuming it's constant or using the first value)
+        ul_value = df[ul_col].iloc[0]
+        if temp_setting is not None:
+            # UL is relative to desired temperature, so actual UL = desired + UL_offset
+            # From the model, desired temp is temp_setting and UL is the offset
+            ul_absolute = temp_setting + ul_value
+        else:
+            ul_absolute = ul_value
+        
+        ul_stats = compute_time_above_ul(df[t_bair_col], df['time'], ul_absolute)
+        results['ul_violation'] = ul_stats
+    else:
+        if t_bair_col not in df.columns:
+            print(f"Warning: {t_bair_col} not found for UL calculation")
+        if ul_col not in df.columns:
+            print(f"Warning: {ul_col} not found in {csv_path}")
     
     return results
 
@@ -246,6 +321,13 @@ def main():
             row['heating_violation_pct'] = violations['heating_violation_pct']
             row['cooling_violation_pct'] = violations['cooling_violation_pct']
             row['total_violation_pct'] = violations['total_violation_pct']
+        
+        # Add UL violation statistics
+        if 'ul_violation' in result:
+            ul_viol = result['ul_violation']
+            row['time_above_ul'] = ul_viol['time_above_ul']
+            row['time_above_ul_pct'] = ul_viol['time_above_ul_pct']
+            row['max_continuous_time_above_ul'] = ul_viol['max_continuous_time_above_ul']
         
         summary_data.append(row)
     

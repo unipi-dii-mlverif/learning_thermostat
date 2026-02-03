@@ -14,6 +14,8 @@ from collections import deque
 from typing import Optional, Dict, Tuple
 
 
+OFFSET = 0.6
+
 class SimpleRL:
     """Simple policy gradient RL for fine-tuning with timing constraints."""
     def __init__(self, policy: nn.Module, lr: float = 1e-5):
@@ -115,6 +117,7 @@ class Model(Fmi2FMU):
         self.prev_T = None
         self.prev_T_time = None
         self.T_derivative = 0.0
+        self.integral_error = 0.0
         
         # RL phase tracking
         self.phase = "bc"  # "bc" -> "rl" -> "eval"
@@ -122,7 +125,7 @@ class Model(Fmi2FMU):
         self.RL_PHASE_END = 12_000.0
         self.rl_agent: Optional[SimpleRL] = None
         self.rl_update_count = 0
-        self.rl_update_every = 50  # Update every N steps
+        self.rl_update_every = 60  # Update every N steps
         self.epsilon = 0.2  # Exploration rate for RL
         self.epsilon_decay = 0.995
         self.min_epsilon = 0.01
@@ -134,13 +137,13 @@ class Model(Fmi2FMU):
         # Epsilon-greedy action persistence
         self.epsilon_action = None  # Store the epsilon-greedy action
         self.epsilon_action_time = float("-inf")  # When the epsilon action was taken
-        self.epsilon_action_duration = 10.0  # Keep epsilon action for 8 seconds
+        self.epsilon_action_duration = 10.0  # Keep epsilon action for ... seconds
         
         # Metrics
         self.total_switches = 0
         self.total_violations = 0  # Timing constraint violations
         self.model = nn.Sequential(
-            nn.Linear(6, 64),
+            nn.Linear(7, 64),
             nn.LeakyReLU(),
             nn.Linear(64, 128),
             nn.ReLU(),
@@ -157,34 +160,82 @@ class Model(Fmi2FMU):
         self.n_false = 0
 
         self.swsm = SWSM(self.model, 33)
+
     
-    def compute_reward(self, time: float, action: int, state: torch.Tensor) -> float:
+    def apply_safety_shield(self, action: int, state: torch.Tensor) -> int:
+        """
+        Overrides the RL action if the system is on a trajectory to violate UL.
+        Uses a PD (Proportional-Derivative) heuristic to estimate braking distance.
+        """
+        if action == 0:
+            return 0  # Shield only restricts turning ON, not OFF.
+
+        # Extract current temp relative to UL from state
+        # state[1] is (T - UL). Positive means we are already above UL.
+        T = float(state[0].item()) + (self.T_desired + (self.UL_in - self.LL_in) / 2.0)
+        dist_to_ul = self.UL_in + self.T_desired - T
+        velocity =  float(state[5].item())   # dT/dt
+        
+        # CONSTRAINT LOGIC:
+        # We define a "braking distance" based on velocity.
+        # The higher the velocity, the earlier we must cut power.
+        # k_brake is a tuning parameter representing system lag (try 5.0 to 15.0)
+        k_brake = 8.0 
+        
+        # If (Current Temp + Predicted Rise) > UL, force OFF.
+        # safety_margin represents the minimum safe distance from UL given current velocity
+        # When velocity is high, safety_margin is more negative (we need more headroom)
+        safety_margin = -(k_brake * max(0, velocity))
+        
+        if dist_to_ul < safety_margin:
+            # We are too close relative to our speed: Force OFF
+            return 0
+            
+        return action
+    
+
+    def compute_reward(self, time: float, action: int, state: torch.Tensor, shielded: bool) -> float:
         """Compute reward for RL with strong overshoot prevention and anticipatory behavior."""
-        T = float(state[0].item())
-        LL = float(state[1].item())
-        UL = float(state[2].item())
+        T = float(state[0].item()) + (self.T_desired + (self.UL_in - self.LL_in) / 2.0)
+        LL = self.T_desired - self.LL_in#float(state[1].item())
+        UL = self.T_desired + self.UL_in#float(state[2].item())
         dT_dt = float(state[5].item())  # Temperature derivative
+        integral_err = float(state[6].item())
         time_since_comm = time - self.commutation_time
         
         reward = 0.0
+        T_BOUND = LL + (0.6)*(UL - LL)
         
-        # 1. COMFORT REWARD/PENALTY: Stay within [LL, UL] with ASYMMETRIC penalties
-        if 1.1*LL <= T <= 0.98*UL:
-            # Gaussian-like reward peaking at center of comfort zone
-            center = (1.1*LL + 0.98*UL) / 2.0
-            width = abs(1.1*LL - 0.98*UL) / 2.0
-            # Gaussian: exp(-((T - center)^2) / (2 * sigma^2))
-            # We want peak of 0.5, so we scale by 0.5
-            # sigma = width/2 gives reasonable spread
-            sigma = width / 2.0
-            reward += 9 * math.exp(-((T - center) ** 2) / (2 * sigma ** 2))
+        ## 1. Tracking Reward (The "Carrot")
+        # Reward for being close to UL, but slightly below (e.g., target UL - 0.5)
+        # Using a tight Gaussian centered just below the limit
+        #target_temp = UL - OFFSET
+        #reward += 5 * math.exp(-((T - target_temp) ** 2) / 0.5)
+
+        reward += 5 * math.exp(-((integral_err/10)**2) / 0.5)
         
+        # 2. Barrier Penalty (The "Stick")
+        # Exponential penalty that skyrockets as T approaches UL.
+        # This gives the agent a "feeling" of danger before the violation.
+        # If T = UL - 0.5, penalty is small. If T = UL, penalty is massive.
+        dist_to_ul = T - UL
+        if dist_to_ul > -1.0: # Only active when near the limit
+            # The exp(5 * dist) term will be 1.0 at UL, and small (~0.006) at UL-1.0
+            barrier_penalty = 2.0 * math.exp(5.0 * dist_to_ul)
+            reward -= barrier_penalty
+                
         # 3. DERIVATIVE-BASED PENALTIES: Penalize dangerous trends
-        if T > UL and dT_dt > 0.01:  # Above limit and still rising - very bad!
-            reward -= 100.0 * dT_dt
-        elif T > 0.961*UL and dT_dt > 0.02:  # Rising too fast toward upper bound
-            reward -= 72 * dT_dt
-        
+        if T > UL: #and dT_dt > 0.01:
+            reward -= 90.0 * dT_dt + 2*(T-UL)
+        elif T < LL: #and self.prev_action == 0:
+            reward -= 2*(LL-T)
+        elif T < T_BOUND:  
+            reward += 25 * dT_dt        
+
+        if T > UL and self.prev_action == 1:
+            reward -= 1.5*(1-math.exp(0.5*time_since_comm))
+
+        #reward -= 0.2*np.clip(abs(integral_err), 0, 20)
 
         # Heating constraint: penalize staying ON beyond H_in
         if time_since_comm > self.H_in and self.prev_action == 1:
@@ -194,13 +245,13 @@ class Model(Fmi2FMU):
         if self.prev_action == 0:
             if time_since_comm >= self.C_in:
                 # Good: cooling constraint satisfied
-                reward += 1 - 0.15*math.exp(0.4 * (self.C_in - time_since_comm))
+                reward += 1 - 0.2*math.exp(0.4 * (self.C_in - time_since_comm))
             else:
                 # Bad: cooling interval too short - penalize proportionally to how early
                 shortfall = self.C_in - time_since_comm
                 reward -= 0.07 * shortfall  # Penalty grows with how much time is missing
-        
-        return reward
+
+        return np.clip(reward, -3,+3)
     
     def exit_initialization_mode(self):
         """
@@ -316,23 +367,30 @@ class Model(Fmi2FMU):
                     torch.save(self.model.state_dict(), bc_path)
                     print(f"[BC] Saved BC model to {bc_path}")
         
+
+
         # Calculate temperature derivative
         if self.prev_T is not None and self.prev_T_time is not None:
             dt = time - self.prev_T_time
             if dt > 0:
                 self.T_derivative = (self.T_bair_in - self.prev_T) / dt
+
+        # update integrator
+        error = self.T_bair_in - (self.T_desired + self.UL_in - OFFSET)
+        self.integral_error = 0.9 * self.integral_error + error # Leaky integrator
         
         self.prev_T = self.T_bair_in
         self.prev_T_time = time
         
         # Build state representation
         state = torch.Tensor([
-            self.T_bair_in,
-            self.T_desired - self.LL_in,
-            self.T_desired + self.UL_in,
+            self.T_bair_in - (self.T_desired + (self.UL_in - self.LL_in) / 2.0),
+            self.T_bair_in - (self.T_desired - self.LL_in),
+            self.T_bair_in - (self.T_desired + self.UL_in),
             math.tanh((time - self.commutation_time - self.C_in) / 2.0),
             math.tanh((time - self.commutation_time - self.H_in) / 2.0),
-            self.T_derivative
+            self.T_derivative,
+            self.integral_error
         ])
         
         # === BC PHASE (Supervised Learning) ===
@@ -385,9 +443,13 @@ class Model(Fmi2FMU):
                 # Reset epsilon action tracking
                 self.epsilon_action = None
             
+            # Apply the shield
+            #raw_action = action
+            #action = self.apply_safety_shield(raw_action, state)
+            
             # Compute reward for previous step if we have one
             if self.prev_state is not None and self.prev_action is not None and self.rl_agent is not None:
-                reward = self.compute_reward(time - 1, self.prev_action, self.prev_state)
+                reward = self.compute_reward(time - 1, self.prev_action, self.prev_state, False)
                 self.reward = reward  # Store for output
                 # Compute log prob for storage (not used in current simple implementation but kept for completeness)
                 with torch.no_grad():
