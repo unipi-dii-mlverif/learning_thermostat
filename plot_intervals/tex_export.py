@@ -160,13 +160,13 @@ def export_tex_interval_plot(temperature_intervals, out_intervals, tex_path):
 
     xmin = means[0]  - 0.5
     xmax = means[-1] + 0.5
+    _fmt = lambda x: f"{x:.2f}".rstrip('0').rstrip('.')
 
     subtitle = (
-        f"$T_{{\\mathrm{{des}}}}={T_desired}$, "
-        f"$\\mathrm{{LL}}={LL}$, $\\mathrm{{UL}}={UL}$, "
+        f"$\\mathrm{{LL}}={T_desired-LL}$, $\\mathrm{{UL}}={T_desired+UL}$, "
         f"$C_{{\\mathrm{{in}}}}={C_in}$\\,s, $H_{{\\mathrm{{in}}}}={H_in}$\\,s, "
         f"$\\dot{{T}}={T_derivative}$\\,$^{{\\circ}}$C/s, "
-        f"$t_{{\\mathrm{{com}}}}={time_since_comm}$\\,s"
+        f"$\\Delta t={time_since_comm}$\\,s"
     )
 
     lines = [
@@ -192,10 +192,10 @@ def export_tex_interval_plot(temperature_intervals, out_intervals, tex_path):
         "    " + ", ".join(f"{m:.4g}" for m in means),
         r"  },",
         r"  xticklabels={",
-        "    " + ", ".join(f"{{$[{ti[0]},{ti[1]}]$}}" for ti in temperature_intervals),
+        "    " + ", ".join(f"{{$[{_fmt(ti[0])},{_fmt(ti[1])}]$}}" for ti in temperature_intervals),
         r"  },",
         r"  x tick label style={rotate=45, anchor=east, font=\tiny},",
-        r"  legend style={at={(0.02,0.02)}, anchor=south west, font=\scriptsize},",
+        r"  legend entries={},",
         r"  tick align=outside,",
         r"  grid=both, grid style={line width=0.2pt, draw=gray!30},",
         r"]",
@@ -210,13 +210,10 @@ def export_tex_interval_plot(temperature_intervals, out_intervals, tex_path):
         r"  } -- cycle;",
         r"  %% Lower bound",
         r"  \addplot[black, thick] coordinates { " + lower_coords + r" };",
-        r"  \addlegendentry{Lower Bound}",
         r"  %% Upper bound",
-        r"  \addplot[black, thick, dashed] coordinates { " + upper_coords + r" };",
-        r"  \addlegendentry{Upper Bound}",
+        r"  \addplot[black, thick] coordinates { " + upper_coords + r" };",
         r"  %% Threshold line",
         r"  \addplot[black, dotted, thick, domain=" + f"{xmin:.4g}:{xmax:.4g}" + r"] {0.5};",
-        r"  \addlegendentry{Threshold $0.5$}",
         r"\end{axis}",
         r"\end{tikzpicture}",
         r"\end{document}",

@@ -21,13 +21,9 @@ from .tex_export import export_tex_interval_plot, export_tex_pgf
 # ── Plot 0: output intervals vs temperature ───────────────────────────────────
 
 def plot_temperature_intervals(model):
-    TEMPERATURE_INTERVALS = [
-        [18, 18.5], [19, 19.5], [20, 20.5], [21, 21.5], [22, 22.5],
-        [23, 23.5], [24, 24.5], [25, 25.5], [26, 26.5], [27, 27.5],
-        [28, 28.5], [29, 29.5], [30, 30.5], [31, 31.5], [32, 32.5],
-        [33, 33.5], [34, 34.5], [35, 35.5], [36, 36.5], [37, 37.5],
-        [38, 38.5], [39, 39.5], [40, 40.5]
-    ]
+    T_MIN, T_MAX, T_STEP, T_WIDTH = 25.5, 37.0, 0.3, 0.3
+    T_STARTS = np.arange(T_MIN, T_MAX + T_STEP / 2, T_STEP)
+    TEMPERATURE_INTERVALS = [[float(t), float(t + T_WIDTH)] for t in T_STARTS]
 
     out_intervals = []
     for ti in TEMPERATURE_INTERVALS:
@@ -79,10 +75,10 @@ def plot_temperature_intervals(model):
 def plot_2d_region(model):
     classify_mod._pool_model = model  # inherited by forked workers
 
-    T_STEP = 0.05
-    DT_STEP = 0.05
-    T_GRID = np.arange(20.0, 40.0, T_STEP)
-    DT_GRID = np.arange(-1, +2, DT_STEP)
+    T_STEP = 0.01
+    DT_STEP = 0.01
+    T_GRID = np.arange(24.0, 38.0, T_STEP)
+    DT_GRID = np.arange(-1, 2, DT_STEP)
 
     result_matrix = np.zeros((len(DT_GRID), len(T_GRID)))
 
@@ -162,7 +158,7 @@ def plot_2d_temp_vs_tsc(model):
                    r'Temperature ($^{\circ}$C)',
                    'Time since commutation (s)',
                    'Heater Decision Regions', tex_path,
-                   subtitle=f'LL={T_desired+LL}, UL={T_desired+UL}, $\\dot{{T}}\\in[{DT_LO},{DT_HI}]$\\,$^{{\\circ}}$C/s')
+                   subtitle=f'LL={T_desired-LL}, UL={T_desired+UL}, $\\dot{{T}}\\in[{DT_LO},{DT_HI}]$\\,$^{{\\circ}}$C/s')
 
     fig, ax = plt.subplots(figsize=(12, 7))
     cmap = mcolors.ListedColormap(['#ff9999', '#ffee88', '#88cc88'])
@@ -215,7 +211,7 @@ def plot_2d_tsc_vs_deriv(model):
                    'Time since commutation (s)',
                    r'Temperature Derivative ($^{\circ}$C/s)',
                    'Heater Decision Regions', tex_path,
-                   subtitle=f'LL={T_desired+LL}, UL={T_desired+UL}, $T_{{\\mathrm{{air}}}}$={T_bair}\\,$^{{\\circ}}$C')
+                   subtitle=f'LL={T_desired-LL}, UL={T_desired+UL}, $T_{{\\mathrm{{air}}}}$={T_bair}\\,$^{{\\circ}}$C')
 
     fig, ax = plt.subplots(figsize=(12, 7))
     cmap = mcolors.ListedColormap(['#ff9999', '#ffee88', '#88cc88'])
