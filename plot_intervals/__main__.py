@@ -8,6 +8,7 @@ from .plots import (
     plot_2d_region,
     plot_2d_temp_vs_tsc,
     plot_2d_tsc_vs_deriv,
+    plot_2d_t_vs_tdes,
 )
 
 DISPATCH = {
@@ -15,6 +16,7 @@ DISPATCH = {
     '1': plot_2d_region,
     '2': plot_2d_temp_vs_tsc,
     '3': plot_2d_tsc_vs_deriv,
+    '4': plot_2d_t_vs_tdes,
 }
 
 
@@ -25,6 +27,7 @@ def main():
         print("  1  — 2D region: temperature vs T_derivative")
         print("  2  — 2D region: temperature vs time-since-commutation")
         print("  3  — 2D region: time-since-commutation vs T_derivative")
+        print("  4  — 2D region: T_desired vs Temperature")
         sys.exit(1)
 
     model = load_model()

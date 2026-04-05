@@ -28,6 +28,20 @@ def make_state(t, dT):
     return make_state_full(t, dT, C_flag, H_flag)
 
 
+def make_state_with_tdes(t, dT, tdes):
+    """Build the 7-element state vector with a dynamic T_desired."""
+    integral_error = (t - (tdes + UL - OFFSET)) / (1.0 - ALPHA)
+    return torch.Tensor([
+        t - (tdes + (UL - LL) / 2.0),
+        t - (tdes - LL),
+        t - (tdes + UL),
+        C_flag,
+        H_flag,
+        dT,
+        integral_error,
+    ])
+
+
 def create_model():
     return nn.Sequential(
         nn.Linear(7, 64),

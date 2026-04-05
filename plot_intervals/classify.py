@@ -4,7 +4,7 @@ from torchverif.interval_tensor.v2 import IntervalTensor
 from torchverif.net_interval.v2 import bounds_from_v2_predictions
 
 from .config import C_in, H_in, T_bair
-from .model import make_state, make_state_full
+from .model import make_state, make_state_full, make_state_with_tdes
 
 # Module-level model reference for worker processes (populated via fork).
 _pool_model = None
@@ -55,4 +55,13 @@ def _classify_cell_tsc_deriv(args):
     return j, i, _classify(IntervalTensor(
         make_state_full(T_bair, dt_lo, c_lb, h_lb),
         make_state_full(T_bair, dt_hi, c_ub, h_ub),
+    ))
+
+
+def _classify_cell_t_vs_tdes(args):
+    """Worker: classify a single (T, T_desired) cell."""
+    j, i, t_lo, t_hi, tdes_lo, tdes_hi = args
+    return j, i, _classify(IntervalTensor(
+        make_state_with_tdes(t_lo, 0.0, tdes_lo),
+        make_state_with_tdes(t_hi, 0.0, tdes_hi),
     ))
