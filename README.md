@@ -1,72 +1,137 @@
 # Learning Thermostat
 
-This project implements a ML-based thermostat control system using Functional Mock-up Units (FMUs) and co-simulation. The system consists of multiple components including a physical plant model and a room environment from the INTO-CPS's case-study.
+This project implements an ML-based thermostat control system using Functional Mock-up Units (FMUs) and Maestro co-simulation.
 
-The key feature is a neural network-based controller (ThermostatML) that learns optimal heating control strategies by observing a baseline controller, then takes over operation once trained. The system uses model swapping to seamlessly transition from the baseline controller to the learned model during runtime.
+The core idea is a two-phase controller:
+- a baseline thermostat controller runs first,
+- a neural controller (`ThermostatML`) learns from the run,
+- then the simulation transitions to the learned controller for inference.
 
-## Getting Started
+Learned weights are saved to `/var/tmp/learning_thermostat/thermostat_nn_model.pt`.
 
-To build and run the complete simulation pipeline:
+## Prerequisites
+
+- Java runtime (for Maestro)
+- Maestro JAR (default used by `Makefile`): `~/Scaricati/maestro-4.0.2-jar-with-dependencies.jar`
+- Python 3 with dependencies from `requirements.txt`
+
+You can override the Maestro path at runtime:
+
+```bash
+make MAESTRO_JAR=/path/to/maestro-jar-with-dependencies.jar all
+```
+
+## Build Pipelines
+
+This repository contains **two Makefiles** with different goals.
+
+### 1) `Makefile` (main pipeline)
+
+Run:
 
 ```bash
 make all
 ```
 
-This will:
-- Build all FMU components
-- Run the simulation
-- Generate performance graphs and reports
+What it does:
+- Packages FMUs from `FMU/*` into `.fmu` archives.
+- Imports and runs phase 1 (`mm1.json`) and phase 2 (`mm2.json`) with Maestro.
+- Produces simulation outputs in `build/` and model weights in `/var/tmp/learning_thermostat/`.
+- Generates default plots (`g_env.pdf`, `g_loss.pdf`, `g_act.pdf`).
+- Runs DSE sweeps over temperatures listed in `temperatures` (`make dse`).
+- Runs baseline-vs-ML comparison and merges traces into `build/cmp/result.csv`.
 
-The trained model weights are saved to `/var/tmp/learning_thermostat/thermostat_nn_model.pt` and can be reused for inference in subsequent runs.
+Useful targets:
+- `make all` : full pipeline
+- `make dse` : only DSE sweep
+- `make clean` : remove generated artifacts
+
+### 2) `aggregated_results.mak` (batch comparison + aggregation)
+
+Run:
+
+```bash
+make -f aggregated_results.mak all
+```
+
+What it does:
+- Sweeps desired temperature values from 30 to 42.
+- For each value, runs both baseline and ML comparison scenarios.
+- Stores raw outputs under `build2/baseline/<T>/` and `build2/ml/<T>/`.
+- Calls `aggregate.py` to compute summary statistics and writes:
+	- `build2/results.json`
+	- `build2/results.csv`
+
+Use this Makefile when you want aggregated cross-temperature statistics rather than the full training pipeline.
 
 ## Repository Structure
 
 ### FMU Components (`FMU/`)
 
-Each subdirectory contains the source files for one FMU component. The Makefile packages them into `.fmu` archives at build time.
+Each subdirectory contains one FMU component source that is packaged into `.fmu` files at build time.
 
 | Component | Role |
 |---|---|
-| `Controller` | Baseline bang-bang thermostat controller |
-| `KalmanFilter` | State estimator for room temperature |
+| `Controller` | Baseline thermostat controller |
+| `KalmanFilter` | State estimator |
 | `Plant` | Physical heating plant model |
-| `Room` | Room environment (from the INTO-CPS case study) |
-| `Supervisor` | Orchestrates the learning/inference model swap |
-| `ThermostatML` | Neural network controller that replaces the baseline after training |
+| `Room` | Room environment model |
+| `Supervisor` | Coordinates learning/inference phases |
+| `ThermostatML` | Neural controller used after learning |
 
 ### Simulation Configuration
 
 | File | Purpose |
 |---|---|
-| `mm1.json` / `mm2.json` | Multi-model configs for phase 1 (learning with baseline) and phase 2 (inference with ML model) |
-| `simulation-config.json` | Maestro co-simulation settings for the main run |
-| `mm_cmp_baseline.json` / `mm_cmp_ml.json` | Multi-model configs for the baseline-vs-ML comparison |
-| `simulation-config-cmp.json` | Maestro settings for the comparison run |
-| `mm_dse.template.json` | DSE template; `%TEMP%` is substituted with each target outdoor temperature |
-| `temperatures` | List of outdoor temperatures swept during DSE |
+| `mm1.json` | Phase 1 multi-model (baseline-guided learning) |
+| `mm2.json` | Phase 2 multi-model (learned-controller inference) |
+| `simulation-config.json` | Maestro settings for main simulation |
+| `mm_cmp_baseline.json` / `mm_cmp_ml.json` | Comparison multi-models |
+| `simulation-config-cmp.json` | Maestro settings for comparison runs |
+| `mm_dse.template.json` | DSE template (`%TEMP%` substituted per run) |
+| `temperatures` | Outdoor temperatures used by DSE |
 
-### Analysis Scripts
+### Analysis and Utility Scripts
 
-| Script | Description |
+| Script/Module | Description |
 |---|---|
-| `plot.py` | Generates PDF plots from simulation traces (environment, loss, actuator signals) |
-| `plot_learning.py` | Plots reward evolution during the learning phase |
-| `plot_intervals.py` | Plots heating/cooling interval length distributions |
-| `create_delta_t_histogram.py` | Histogram of temperature delta values across runs |
-| `check_intervals.py` | Verifies that heating/cooling intervals satisfy timing constraints |
-| `analyze_cmp.py` | Computes comfort MSE and actuation divergence between baseline and ML |
-| `merge_cmp.py` | Merges baseline and ML comparison CSVs into a single file |
-| `aggregate.py` | Aggregates statistics (mean, std, min, max) across DSE simulation runs |
-| `rl_train_from_result.py` | Offline RL/imitation-learning training from recorded simulation traces |
+| `plot.py` | Generates simulation plots from CSV traces (`g_env.pdf`, `g_loss.pdf`, `g_act.pdf`, `g_reward.pdf`) |
+| `plot_learning.py` | Plots learning metrics (loss, reward, temperature trace) from a run CSV |
+| `plot_intervals` | Package for interval-based neural decision-region visualization (see below) |
+| `create_delta_t_histogram.py` | Histogram analysis of temperature derivative data |
+| `check_intervals.py` | Validates ON/OFF interval constraints (`--T`, `--H`, `--C`) |
+| `merge_cmp.py` | Merges baseline and ML comparison CSVs |
+| `analyze_cmp.py` | Quick comparison metrics on merged comparison output |
+| `aggregate.py` | Aggregates statistics across many simulation outputs |
+| `rl_train_from_result.py` | Offline BC/RL training from merged comparison traces |
+
+### `plot_intervals`: what it does
+
+`plot_intervals` is a Python package (directory), not a single script file.
+
+Run it with:
+
+```bash
+python -m plot_intervals <mode>
+```
+
+Available modes:
+- `0` : output interval bounds vs temperature intervals
+- `1` : 2D decision regions (Temperature vs dT/dt)
+- `2` : 2D decision regions (Temperature vs time-since-commutation)
+- `3` : 2D decision regions (time-since-commutation vs dT/dt)
+- `4` : 2D decision regions (Desired temperature vs Temperature)
+
+For each grid cell, interval arithmetic is used to classify the neural output into:
+- definitely OFF,
+- possibly ON,
+- definitely ON.
+
+Outputs are saved under `/var/tmp/learning_thermostat/` as PNG and TeX artifacts.
 
 ### Diagrams
 
 | File | Description |
 |---|---|
 | `diagram.dot` / `diagram_mm1.dot` | Co-simulation architecture diagrams |
-| `controller_automaton.dot` | Automaton diagram of the baseline controller logic |
-
-### Build System
-
-- `Makefile` — full pipeline: FMU packaging, Maestro co-simulation, DSE temperature sweep, comparison runs, and plot generation. Key targets: `all`, `dse`, `clean`.
-- `aggregated_results.mak` — Makefile fragment for collecting and aggregating DSE results.
+| `controller_automaton.dot` | Baseline controller automaton |
